@@ -1,65 +1,48 @@
 {
-	"name": "your-extension-name",
-	"uuid": "",
-	"displayName": "你的扩展名称/Your Extension Name",
-	"description": "",
-	"version": "1.0.0",
-	"publisher": "",
+	"name": "lceda-decoupling-meow",
+	"uuid": "7f342549d32b4cbca363f63d3b5b734d",
+	"displayName": "去耦喵",
+	"description": "识别选中芯片的多个电源域，并按可编辑计划添加电源标签、主电容和逐引脚去耦电容，支持删除与整批撤销。",
+	"version": "0.1.0",
+	"publisher": "MeowKJ",
 	"engines": {
 		"eda": "^3.0.0"
 	},
 	"license": "Apache-2.0",
 	"repository": {
-		"type": "extension-store",
-		"url": ""
+		"type": "github",
+		"url": "https://github.com/MeowKJ/lceda-decoupling-meow"
 	},
-	"categories": "Other",
+	"categories": "Schematic",
 	"keywords": [
-		"Tool"
+		"Decoupling",
+		"Schematic",
+		"Power",
+		"Capacitor",
+		"Generator"
 	],
 	"images": {
 		"logo": "./images/logo.png"
 	},
-	"homepage": "",
-	"bugs": "",
+	"homepage": "https://github.com/MeowKJ/lceda-decoupling-meow",
+	"bugs": "https://github.com/MeowKJ/lceda-decoupling-meow/issues",
 	"activationEvents": {},
 	"entry": "./dist/index",
 	"dependentExtensions": {},
 	"headerMenus": {
-		"home": [
-			{
-				"id": "menuId",
-				"title": "Ext Menu",
-				"menuItems": [
-					{
-						"id": "About",
-						"title": "About...",
-						"registerFn": "about"
-					}
-				]
-			}
-		],
 		"sch": [
 			{
-				"id": "menuId",
-				"title": "Ext Menu",
+				"id": "lceda-decoupling-meow-menu",
+				"title": "去耦喵",
 				"menuItems": [
 					{
-						"id": "About",
-						"title": "About...",
-						"registerFn": "about"
-					}
-				]
-			}
-		],
-		"pcb": [
-			{
-				"id": "menuId",
-				"title": "Ext Menu",
-				"menuItems": [
+						"id": "lceda-decoupling-meow-generate",
+						"title": "为选中芯片生成去耦",
+						"registerFn": "generateForSelectedComponent"
+					},
 					{
-						"id": "About",
-						"title": "About...",
+						"id": "lceda-decoupling-meow-about",
+						"title": "关于去耦喵",
 						"registerFn": "about"
 					}
 				]

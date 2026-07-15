@@ -1,11 +1,125 @@
 <!doctype html>
 <html lang="zh-Hans">
 	<head>
-		<title>Inner Frame</title>
+		<title>去耦喵</title>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<link rel="stylesheet" href="./styles.css" />
 	</head>
 	<body>
-		<p>这是一个示例 IFrame 页面</p>
+		<main class="app-shell">
+			<header class="hero">
+				<div class="brand-mark" aria-hidden="true"><span></span><span></span><b>ฅ</b></div>
+				<div>
+					<p class="eyebrow">DECOUPLING GENERATOR</p>
+					<h1>去耦喵</h1>
+					<p class="subtitle">识别多个电源域，确认计划后一次生成标签与电容。</p>
+				</div>
+				<div id="componentBadge" class="component-badge">正在读取…</div>
+			</header>
+
+			<div id="errorBanner" class="error-banner" hidden></div>
+			<div id="successBanner" class="success-banner" hidden></div>
+
+			<section class="workspace-grid">
+				<aside class="panel pins-panel">
+					<div class="panel-heading">
+						<div>
+							<p class="section-kicker">STEP 1</p>
+							<h2>选择电源引脚</h2>
+						</div>
+						<span id="selectedPinCount" class="tiny-badge">0</span>
+					</div>
+					<p class="panel-help">自动识别只是建议。可勾选任意引脚，并分配到不同电源域。</p>
+					<div class="pin-filter-row">
+						<input id="pinSearch" type="search" placeholder="筛选引脚…" />
+						<button id="onlyCandidatesButton" class="ghost-button active" type="button">只看候选</button>
+					</div>
+					<div id="pinsList" class="pins-list"></div>
+				</aside>
+
+				<section class="panel domains-panel">
+					<div class="panel-heading">
+						<div>
+							<p class="section-kicker">STEP 2</p>
+							<h2>配置电源域</h2>
+						</div>
+						<button id="addDomainButton" class="secondary-button" type="button">＋ 新增电源域</button>
+					</div>
+					<p class="panel-help">每个电源域可选择或自定义标签，并独立增删主电容和逐引脚去耦。</p>
+					<datalist id="labelPresets">
+						<option value="+1V0"></option><option value="+1V1"></option><option value="+1V2"></option>
+						<option value="+1V8"></option><option value="+2V5"></option><option value="+3V3"></option>
+						<option value="+5V"></option><option value="VDD"></option><option value="VCC"></option>
+						<option value="VDDA"></option><option value="AVDD"></option><option value="DVDD"></option>
+						<option value="VCORE"></option><option value="VBAT"></option><option value="VREF"></option>
+					</datalist>
+					<div id="domainsList" class="domains-list"></div>
+				</section>
+			</section>
+
+			<section class="panel generator-panel">
+				<div class="panel-heading">
+					<div>
+						<p class="section-kicker">STEP 3</p>
+						<h2>选择电容器件并生成</h2>
+					</div>
+					<span class="read-only-chip">不会检查或删除原有器件</span>
+				</div>
+
+				<div class="generator-grid">
+					<div class="device-picker">
+						<label>电容库器件</label>
+						<div id="selectedDevice" class="selected-device">尚未选择</div>
+						<div class="device-search-row">
+							<input id="deviceSearchInput" type="search" value="100nF capacitor" placeholder="搜索电容器件" />
+							<button id="deviceSearchButton" class="secondary-button" type="button">搜索</button>
+						</div>
+						<select id="deviceResults" size="4" aria-label="电容器件搜索结果"></select>
+					</div>
+
+					<div class="placement-settings">
+						<label>生成位置</label>
+						<div class="segmented-control" role="group" aria-label="生成位置">
+							<button type="button" data-side="auto" class="active">自动</button>
+							<button type="button" data-side="right">芯片右侧</button>
+							<button type="button" data-side="left">芯片左侧</button>
+						</div>
+						<div id="planSummary" class="plan-summary"></div>
+						<p class="placement-note">生成时会在芯片电源脚放置电源标签；电容使用同名电源标签和 GND 标签连接，不移动芯片。</p>
+					</div>
+
+					<div class="generate-actions">
+						<button id="generateButton" class="primary-button" type="button">生成去耦电路</button>
+						<p>创建过程采用事务式回滚：任一步失败，本次已创建图元会自动删除。</p>
+					</div>
+				</div>
+			</section>
+
+			<section id="historyPanel" class="panel history-panel" hidden>
+				<div class="panel-heading">
+					<div>
+						<p class="section-kicker">MANAGE</p>
+						<h2>本芯片的生成记录</h2>
+					</div>
+				</div>
+				<div id="historyList" class="history-list"></div>
+			</section>
+
+			<footer>
+				<span>Apache-2.0 · 基于嘉立创 EDA 官方扩展 SDK</span>
+				<a href="https://github.com/MeowKJ/lceda-decoupling-meow">GitHub</a>
+			</footer>
+		</main>
+
+		<div id="loadingOverlay" class="loading-overlay" hidden>
+			<div class="loader-card" role="status" aria-live="polite">
+				<div class="paw-loader"><span></span><span></span><span></span></div>
+				<strong id="loadingTitle">去耦喵正在生成…</strong>
+				<p id="loadingDetail">请不要关闭窗口。</p>
+			</div>
+		</div>
+
+		<script type="module" src="./app.mjs"></script>
 	</body>
 </html>

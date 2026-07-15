@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="72" y1="54" x2="438" y2="458" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7B69F2"/>
+      <stop offset="1" stop-color="#4D3CB7"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#2C236E" flood-opacity=".25"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="132" fill="#F3F0FF"/>
+  <path filter="url(#shadow)" d="M105 180 145 91l72 55c25-8 53-8 78 0l72-55 40 89c25 31 40 72 40 114 0 101-82 163-191 163S65 395 65 294c0-42 15-83 40-114Z" fill="url(#bg)"/>
+  <circle cx="169" cy="233" r="13" fill="#fff"/>
+  <circle cx="343" cy="233" r="13" fill="#fff"/>
+  <path d="M245 262c7 7 15 7 22 0" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round"/>
+  <path d="M197 310h43m32 0h43" stroke="#fff" stroke-width="20" stroke-linecap="round"/>
+  <path d="M246 277v66m20-66v66" stroke="#fff" stroke-width="14" stroke-linecap="round"/>
+  <path d="M166 272 97 253m69 46-72 3m252-30 69-19m-69 46 72 3" stroke="#fff" stroke-width="8" stroke-linecap="round" opacity=".82"/>
+</svg>
