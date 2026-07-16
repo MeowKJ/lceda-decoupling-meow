@@ -8,115 +8,66 @@
 	</head>
 	<body>
 		<main class="app-shell">
-			<header class="hero">
-				<div class="brand-mark" aria-hidden="true"><span></span><span></span><b>ฅ</b></div>
-				<div class="brand-copy">
-					<h1>去耦喵</h1>
-					<p class="subtitle">多电源域去耦阵列</p>
+			<header class="topbar">
+				<div id="componentBadge" class="component-summary">正在读取芯片…</div>
+				<div class="header-actions">
+					<button id="adjustPinsButton" class="quiet-button" type="button">调整引脚</button>
+					<details id="historyPanel" class="history-panel" hidden>
+						<summary>生成记录</summary>
+						<div id="historyList" class="history-list"></div>
+					</details>
 				</div>
-				<div id="componentBadge" class="component-badge">正在读取…</div>
 			</header>
 
-			<div id="errorBanner" class="error-banner" hidden></div>
-			<div id="successBanner" class="success-banner" hidden></div>
+			<div class="notice-stack">
+				<div id="errorBanner" class="notice error-banner" hidden></div>
+				<div id="successBanner" class="notice success-banner" hidden></div>
+			</div>
 
-			<section class="workspace-grid">
-				<aside class="panel pins-panel">
-					<div class="panel-heading">
-						<div>
-							<p class="section-kicker">STEP 1</p>
-							<h2>选择电源引脚</h2>
-						</div>
-						<span id="selectedPinCount" class="tiny-badge">0</span>
-					</div>
-					<p class="panel-help">勾选引脚并分配电源域。</p>
-					<div class="pin-filter-row">
-						<input id="pinSearch" type="search" placeholder="筛选引脚…" />
-						<button id="onlyCandidatesButton" class="ghost-button active" type="button">只看候选</button>
-					</div>
-					<div id="pinsList" class="pins-list"></div>
-				</aside>
-
-				<section class="panel domains-panel">
-					<div class="panel-heading">
-						<div>
-							<p class="section-kicker">STEP 2</p>
-							<h2>配置电源域</h2>
-						</div>
-						<button id="addDomainButton" class="secondary-button" type="button">＋ 新增电源域</button>
-					</div>
-					<p class="panel-help">配置标签、主电容和逐引脚去耦。</p>
-					<datalist id="labelPresets">
-						<option value="+1V0"></option><option value="+1V1"></option><option value="+1V2"></option>
-						<option value="+1V8"></option><option value="+2V5"></option><option value="+3V3"></option>
-						<option value="+5V"></option><option value="VDD"></option><option value="VCC"></option>
-						<option value="VDDA"></option><option value="AVDD"></option><option value="DVDD"></option>
-						<option value="VCORE"></option><option value="VBAT"></option><option value="VREF"></option>
-					</datalist>
-					<div id="domainsList" class="domains-list"></div>
-				</section>
+			<section class="domains-panel">
+				<div class="section-heading">
+					<h1>电源域</h1>
+				</div>
+				<div class="domain-columns" aria-hidden="true"><span>电源域</span><span>引脚</span><span>主电容</span><span>引脚去耦</span><span></span></div>
+				<datalist id="labelPresets">
+					<option value="+1V0"></option><option value="+1V1"></option><option value="+1V2"></option>
+					<option value="+1V8"></option><option value="+2V5"></option><option value="+3V3"></option>
+					<option value="+5V"></option><option value="VDD"></option><option value="VCC"></option>
+					<option value="VDDA"></option><option value="AVDD"></option><option value="DVDD"></option>
+					<option value="VCORE"></option><option value="VBAT"></option><option value="VREF"></option>
+				</datalist>
+				<div id="domainsList" class="domains-list"></div>
 			</section>
 
-			<section class="panel generator-panel">
-				<div class="panel-heading">
-					<div>
-						<p class="section-kicker">STEP 3</p>
-						<h2>器件与生成</h2>
+			<aside id="pinsDrawer" class="pins-drawer" hidden>
+				<div class="drawer-heading">
+					<div><strong>调整电源引脚</strong><span>已选 <b id="selectedPinCount">0</b> 个，勾选并分配电源域</span></div>
+					<div class="drawer-actions"><button id="addDomainButton" class="quiet-button" type="button">＋ 电源域</button><button id="closePinsButton" class="icon-button" type="button" aria-label="关闭">×</button></div>
+				</div>
+				<div class="pins-toolbar">
+					<input id="pinSearch" type="search" placeholder="搜索引脚或网络" />
+					<button id="onlyCandidatesButton" class="filter-button active" type="button">仅候选</button>
+				</div>
+				<div id="pinsList" class="pins-list"></div>
+			</aside>
+
+			<footer class="action-dock">
+				<div class="device-pickers">
+					<div class="device-config">
+						<button class="device-picker" data-open-native-device="bulk" type="button">
+							<span>主容器件</span><strong data-selected-device="bulk">选择器件</strong><b>›</b>
+						</button>
+						<input class="global-cap-value" data-global-cap-value="bulk" aria-label="全局主电容容量" type="text" value="4.7uF" spellcheck="false" />
+					</div>
+					<div class="device-config">
+						<button class="device-picker" data-open-native-device="pin" type="button">
+							<span>去耦器件</span><strong data-selected-device="pin">选择器件</strong><b>›</b>
+						</button>
+						<input class="global-cap-value" data-global-cap-value="pin" aria-label="全局去耦电容容量" type="text" value="100nF" spellcheck="false" />
 					</div>
 				</div>
-
-				<div class="generator-grid">
-					<div class="device-picker">
-						<label>嘉立创 EDA 原生器件库</label>
-						<p class="native-picker-help">选择时自动切到原生库，点中后返回。</p>
-						<div class="device-slots">
-							<div class="device-slot">
-								<div class="device-slot-title"><strong>主电容</strong><span>Bulk</span></div>
-								<div class="selected-device" data-selected-device="bulk">尚未选择</div>
-								<div class="device-actions">
-									<button class="secondary-button" data-open-native-device="bulk" type="button">选择器件</button>
-									<button class="ghost-button" data-use-current-device="bulk" type="button">用当前</button>
-								</div>
-							</div>
-							<div class="device-slot">
-								<div class="device-slot-title"><strong>引脚去耦</strong><span>Bypass</span></div>
-								<div class="selected-device" data-selected-device="pin">尚未选择</div>
-								<div class="device-actions">
-									<button class="secondary-button" data-open-native-device="pin" type="button">选择器件</button>
-									<button class="ghost-button" data-use-current-device="pin" type="button">用当前</button>
-								</div>
-							</div>
-						</div>
-					</div>
-
-					<div class="placement-settings">
-						<label>阵列布局</label>
-						<div class="placement-preview"><b>─┬─┬─┬─</b><span>最长器件上下端对齐母线 · 单 GND</span></div>
-						<div id="planSummary" class="plan-summary"></div>
-						<p class="placement-note">不修改芯片，不在芯片引脚添加标签。</p>
-					</div>
-
-					<div class="generate-actions">
-						<strong>快速完成</strong>
-						<p>选择一个锚点，一次生成全部网络。</p>
-						<button id="placeAllButton" class="primary-button" type="button">快速生成全部</button>
-					</div>
-				</div>
-			</section>
-
-			<section id="historyPanel" class="panel history-panel" hidden>
-				<div class="panel-heading">
-					<div>
-						<p class="section-kicker">MANAGE</p>
-						<h2>本芯片的生成记录</h2>
-					</div>
-				</div>
-				<div id="historyList" class="history-list"></div>
-			</section>
-
-			<footer>
-				<span>Apache-2.0 · 基于嘉立创 EDA 官方扩展 SDK</span>
-				<a href="https://github.com/MeowKJ/lceda-decoupling-meow">GitHub</a>
+				<div id="placementSummary" class="placement-summary">正在计算…</div>
+				<button id="placeAllButton" class="primary-button" type="button">放置</button>
 			</footer>
 		</main>
 

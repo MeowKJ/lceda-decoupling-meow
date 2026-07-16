@@ -1,8 +1,10 @@
 const INPUT_STORAGE_KEY = 'decouplingMeow.generatorInput.v1';
 const DEVICES_STORAGE_KEY = 'decouplingMeow.capacitorDevices.v2';
+const CAP_VALUES_STORAGE_KEY = 'decouplingMeow.capacitorValues.v1';
 const LEGACY_DEVICE_STORAGE_KEY = 'decouplingMeow.capacitorDevice.v1';
 const MANIFESTS_STORAGE_KEY = 'decouplingMeow.manifests.v1';
 const IFRAME_ID = 'lceda-decoupling-meow-window';
+const DEFAULT_CAP_VALUES = Object.freeze({ bulk: '4.7uF', pin: '100nF' });
 
 const POWER_PIN_PATTERNS = [
 	/^(?:VDD|VCC|AVDD|DVDD|PVDD|IOVDD|VDDIO|VCORE|VBAT|VREF|VIN|VIOIN|VINPA|VNWA|VOUT|VPP)[\w+-]*$/i,
@@ -32,6 +34,7 @@ const state = {
 	onlyCandidates: true,
 	placementPending: false,
 	primitiveIdsSnapshot: new Set(),
+	values: { ...DEFAULT_CAP_VALUES },
 };
 
 let sequence = 0;
@@ -79,9 +82,62 @@ function createCap(value, kind, pinNumber = '') {
 	return { id: nextId('cap'), kind, pinNumber, value };
 }
 
-function createDomain(label) {
+export function normalizeCapacitanceValue(raw, allowEia = false) {
+	const value = String(raw ?? '').trim();
+	if (!value)
+		return '';
+	const compact = value.replaceAll('μ', 'u').replaceAll('µ', 'u').replace(/\s+/g, '');
+	const unitMatch = compact.match(/(\d+(?:\.\d+)?)([pnum])f/i);
+	if (unitMatch)
+		return `${Number(unitMatch[1])}${unitMatch[2].toLowerCase()}F`;
+	const embeddedDecimal = compact.match(/^(\d+)([pnum])(\d+)$/i);
+	if (embeddedDecimal)
+		return `${Number(`${embeddedDecimal[1]}.${embeddedDecimal[3]}`)}${embeddedDecimal[2].toLowerCase()}F`;
+	if (allowEia && /^\d{3}$/.test(compact)) {
+		const picofarads = Number(compact.slice(0, 2)) * (10 ** Number(compact[2]));
+		if (picofarads >= 1_000_000)
+			return `${picofarads / 1_000_000}uF`;
+		if (picofarads >= 1_000)
+			return `${picofarads / 1_000}nF`;
+		return `${picofarads}pF`;
+	}
+	return '';
+}
+
+function devicePropertyEntries(device) {
+	const sources = [
+		device?.property?.otherProperty,
+		device?.attributes,
+		device?.properties,
+	];
+	return sources.flatMap(source => source && typeof source === 'object' ? Object.entries(source) : []);
+}
+
+export function extractDeviceCapacitance(device) {
+	const capacitanceKey = /^(?:value|capacitance|capacity|容量|电容量)$/i;
+	for (const [key, value] of devicePropertyEntries(device)) {
+		if (!capacitanceKey.test(String(key).trim()))
+			continue;
+		const normalized = normalizeCapacitanceValue(value, true);
+		if (normalized)
+			return normalized;
+	}
+	for (const value of [device?.value, device?.property?.name]) {
+		const normalized = normalizeCapacitanceValue(value, false);
+		if (normalized)
+			return normalized;
+	}
+	for (const value of [device?.name, device?.description]) {
+		const normalized = normalizeCapacitanceValue(value, false);
+		if (normalized)
+			return normalized;
+	}
+	return '';
+}
+
+function createDomain(label, values = state.values) {
 	return {
-		bulkCaps: [createCap('4.7uF', 'bulk')],
+		bulkCaps: [createCap(values.bulk, 'bulk')],
 		bulkEnabled: true,
 		id: nextId('domain'),
 		label,
@@ -90,7 +146,7 @@ function createDomain(label) {
 	};
 }
 
-export function buildInitialDomains(pins) {
+export function buildInitialDomains(pins, values = DEFAULT_CAP_VALUES) {
 	const byLabel = new Map();
 	for (const pin of pins ?? []) {
 		if (!isPowerCandidate(pin))
@@ -98,11 +154,11 @@ export function buildInitialDomains(pins) {
 		const label = suggestPowerLabel(pin);
 		let domain = byLabel.get(label);
 		if (!domain) {
-			domain = createDomain(label);
+			domain = createDomain(label, values);
 			byLabel.set(label, domain);
 		}
 		domain.pinNumbers.push(String(pin.number));
-		domain.pinCaps[String(pin.number)] = [createCap('100nF', 'pin', String(pin.number))];
+		domain.pinCaps[String(pin.number)] = [createCap(values.pin, 'pin', String(pin.number))];
 	}
 	return [...byLabel.values()];
 }
@@ -130,7 +186,7 @@ function assignPin(number, domainId, addDefaultCap = true) {
 	if (!domain)
 		return;
 	domain.pinNumbers.push(key);
-	domain.pinCaps[key] = addDefaultCap ? [createCap('100nF', 'pin', key)] : [];
+	domain.pinCaps[key] = addDefaultCap ? [createCap(state.values.pin, 'pin', key)] : [];
 }
 
 function escapeHtml(value) {
@@ -152,14 +208,6 @@ function setSuccess(message = '') {
 	const banner = document.querySelector('#successBanner');
 	banner.hidden = !message;
 	banner.textContent = message;
-}
-
-function candidateBadge(pin) {
-	if (pin.isPowerType)
-		return '<span class="pin-badge power">POWER</span>';
-	if (isPowerCandidate(pin))
-		return '<span class="pin-badge suggested">名称匹配</span>';
-	return '';
 }
 
 function renderPins() {
@@ -184,9 +232,8 @@ function renderPins() {
 			</label>
 			<div class="pin-info">
 				<strong>${escapeHtml(pin.name || '未命名引脚')}</strong>
-				<small>${escapeHtml(pin.type)}${pin.net ? ` · ${escapeHtml(pin.net)}` : ''}</small>
+				${pin.net ? `<small>${escapeHtml(pin.net)}</small>` : ''}
 			</div>
-			${candidateBadge(pin)}
 			<select data-pin-domain="${escapeHtml(pin.number)}" ${domain ? '' : 'disabled'}>
 				${options || '<option value="">请先新增电源域</option>'}
 			</select>
@@ -228,46 +275,74 @@ function renderCapEditor(cap, domainId, pinNumber = '') {
 	</div>`;
 }
 
-function renderDomain(domain, index) {
+function summarizeCaps(caps, emptyLabel = '未设置') {
+	if (!caps.length)
+		return emptyLabel;
+	const values = [...new Set(caps.map(cap => cap.value))];
+	if (values.length === 1)
+		return caps.length === 1 ? values[0] : `${values[0]} ×${caps.length}`;
+	return `${caps.length} 颗自定义`;
+}
+
+function renderDomain(domain) {
 	const pins = domain.pinNumbers.map(getPin).filter(Boolean);
-	return `<article class="domain-card" data-domain-id="${domain.id}">
-		<div class="domain-header">
-			<div class="domain-index">${index + 1}</div>
-			<label class="domain-label-field">
-				<span>电源标签</span>
-				<input list="labelPresets" value="${escapeHtml(domain.label)}" data-domain-label="${domain.id}" />
-			</label>
-			<div class="domain-actions">
-				<button class="domain-delete-button" type="button" data-delete-domain="${domain.id}">删除电源域</button>
+	const pinCaps = domain.pinNumbers.flatMap(pinNumber => domain.pinCaps[String(pinNumber)] ?? []);
+	const bulkSummary = domain.bulkEnabled === false
+		? '不放主容'
+		: summarizeCaps(domain.bulkCaps, '未设置');
+	const pinPreview = pins.map(pin => pin.number).join(' / ') || '未分配引脚';
+	return `<details class="domain-card" data-domain-id="${domain.id}">
+		<summary class="domain-summary">
+			<strong class="domain-name">${escapeHtml(domain.label || '未命名电源域')}</strong>
+			<span class="domain-pins" title="${escapeHtml(pinPreview)}">${escapeHtml(pinPreview)}</span>
+			<label class="summary-bulk-toggle"><input type="checkbox" data-toggle-bulk="${domain.id}" ${domain.bulkEnabled !== false ? 'checked' : ''} /><span>${escapeHtml(bulkSummary)}</span></label>
+			<span class="summary-value">${escapeHtml(summarizeCaps(pinCaps))}</span>
+			<span class="domain-chevron" aria-hidden="true"></span>
+		</summary>
+		<div class="domain-editor">
+			<div class="domain-editor-heading">
+				<label><span>电源标签</span><input list="labelPresets" value="${escapeHtml(domain.label)}" data-domain-label="${domain.id}" /></label>
+				<button class="danger-button" type="button" data-delete-domain="${domain.id}">删除此域</button>
 			</div>
-		</div>
-		<div class="domain-section">
+			<div class="domain-section">
 			<div class="domain-section-title">
 				<label class="bulk-toggle"><input type="checkbox" data-toggle-bulk="${domain.id}" ${domain.bulkEnabled !== false ? 'checked' : ''} /> 主电容</label>
-				<button type="button" data-add-bulk="${domain.id}" ${domain.bulkEnabled === false ? 'disabled' : ''}>＋ 添加</button>
+				<button type="button" data-add-bulk="${domain.id}" ${domain.bulkEnabled === false ? 'disabled' : ''}>增加一颗</button>
 			</div>
 			<div class="caps-row ${domain.bulkEnabled === false ? 'disabled-caps' : ''}">${domain.bulkCaps.length ? domain.bulkCaps.map(cap => renderCapEditor(cap, domain.id)).join('') : '<span class="empty-inline">未添加主电容</span>'}</div>
 		</div>
 		<div class="domain-section pin-decoupling-section">
-			<div class="domain-section-title"><strong>引脚去耦</strong><span>${pins.length} 个引脚</span></div>
+			<div class="domain-section-title"><strong>引脚去耦例外</strong><span>默认每脚 100nF，可单独调整</span></div>
 			${pins.length
 				? pins.map((pin) => {
 						const caps = domain.pinCaps[String(pin.number)] ?? [];
 						return `<div class="pin-cap-row">
 					<div class="pin-cap-name"><strong>${escapeHtml(pin.name || 'POWER')}</strong><span>Pin ${escapeHtml(pin.number)}</span></div>
-					<div class="caps-row">${caps.map(cap => renderCapEditor(cap, domain.id, pin.number)).join('')}<button class="add-cap-button" type="button" data-add-pin-cap="${domain.id}" data-pin-number="${escapeHtml(pin.number)}">＋</button></div>
+					<div class="caps-row">${caps.map(cap => renderCapEditor(cap, domain.id, pin.number)).join('')}<button class="add-cap-button" type="button" data-add-pin-cap="${domain.id}" data-pin-number="${escapeHtml(pin.number)}">增加</button></div>
 				</div>`;
 					}).join('')
-				: '<div class="empty-domain">从左侧勾选引脚，并分配到此电源域。</div>'}
+				: '<div class="empty-domain">请从“调整引脚”中分配电源引脚。</div>'}
 		</div>
-	</article>`;
+		</div>
+	</details>`;
 }
 
 function renderDomains() {
 	const list = document.querySelector('#domainsList');
 	list.innerHTML = state.domains.length > 0
 		? state.domains.map(renderDomain).join('')
-		: '<div class="empty-state domain-empty">尚无电源域。点击“新增电源域”，或在左侧勾选一个候选引脚。</div>';
+		: '<div class="empty-state domain-empty">尚无电源域。新增一个电源域，或打开“调整引脚”。</div>';
+
+	list.querySelectorAll('.domain-card').forEach((details) => {
+		details.addEventListener('toggle', () => {
+			if (!details.open)
+				return;
+			list.querySelectorAll('.domain-card[open]').forEach((other) => {
+				if (other !== details)
+					other.open = false;
+			});
+		});
+	});
 
 	list.querySelectorAll('[data-domain-label]').forEach((input) => {
 		input.addEventListener('change', () => {
@@ -286,6 +361,7 @@ function renderDomains() {
 	});
 
 	list.querySelectorAll('[data-toggle-bulk]').forEach((checkbox) => {
+		checkbox.addEventListener('click', event => event.stopPropagation());
 		checkbox.addEventListener('change', () => {
 			const domain = state.domains.find(item => item.id === checkbox.dataset.toggleBulk);
 			if (domain)
@@ -298,7 +374,7 @@ function renderDomains() {
 		button.addEventListener('click', () => {
 			const domain = state.domains.find(item => item.id === button.dataset.addBulk);
 			if (domain)
-				domain.bulkCaps.push(createCap('4.7uF', 'bulk'));
+				domain.bulkCaps.push(createCap(state.values.bulk, 'bulk'));
 			renderAll();
 		});
 	});
@@ -309,7 +385,7 @@ function renderDomains() {
 			const pinNumber = button.dataset.pinNumber;
 			if (domain) {
 				domain.pinCaps[pinNumber] ??= [];
-				domain.pinCaps[pinNumber].push(createCap('100nF', 'pin', pinNumber));
+				domain.pinCaps[pinNumber].push(createCap(state.values.pin, 'pin', pinNumber));
 			}
 			renderAll();
 		});
@@ -371,11 +447,17 @@ function countPlan() {
 
 function renderPlanSummary() {
 	const summary = countPlan();
-	document.querySelector('#planSummary').innerHTML = `
-		<div><strong>${summary.domains}</strong><span>电源域</span></div>
-		<div><strong>${summary.labels}</strong><span>芯片标签</span></div>
-		<div><strong>${summary.bulkCaps}</strong><span>主电容</span></div>
-		<div><strong>${summary.pinCaps}</strong><span>引脚电容</span></div>`;
+	const totalCaps = summary.bulkCaps + summary.pinCaps;
+	const existingBatches = getRelevantManifests().length;
+	document.querySelector('#componentBadge').innerHTML = `<strong>${escapeHtml(state.input?.selected?.designator || '芯片')}</strong><span>${summary.domains} 个电源域 · ${summary.labels} 个电源脚</span>`;
+	document.querySelector('#placementSummary').textContent = existingBatches > 0
+		? `${totalCaps} 颗电容 · 替换旧结果`
+		: `${totalCaps} 颗电容`;
+	document.querySelector('#placeAllButton').textContent = existingBatches > 0
+		? '替换现有去耦'
+		: summary.domains > 0
+			? `放置 ${summary.domains} 个电源域`
+			: '放置';
 }
 
 function renderAll() {
@@ -409,26 +491,57 @@ function renderSelectedDevice(kind) {
 	const button = document.querySelector(`[data-open-native-device="${kind}"]`);
 	if (button) {
 		const active = state.devicePicker.kind === kind;
-		button.textContent = active ? '等待选择…' : '选择器件';
 		button.classList.toggle('picker-active', active);
+		button.classList.toggle('ready', Boolean(device));
 		button.disabled = active;
 	}
-	if (!device) {
-		element.textContent = `尚未选择${deviceKindLabel(kind)}器件。`;
-		element.classList.remove('ready');
+	if (state.devicePicker.kind === kind) {
+		element.textContent = '等待原生库选择…';
 		return;
 	}
-	element.innerHTML = `<strong>${escapeHtml(device.name)}</strong><span>${escapeHtml(device.symbolName || '电容符号')}${device.footprintName ? ` · ${escapeHtml(device.footprintName)}` : ''}</span>`;
-	element.classList.add('ready');
+	if (!device) {
+		element.textContent = '选择器件';
+		return;
+	}
+	element.textContent = device.footprintName || device.name;
 }
 
 function renderSelectedDevices() {
 	renderSelectedDevice('bulk');
 	renderSelectedDevice('pin');
+	for (const [kind, value] of Object.entries(state.values)) {
+		const input = document.querySelector(`[data-global-cap-value="${kind}"]`);
+		if (input && document.activeElement !== input)
+			input.value = value;
+	}
 }
 
 async function saveDevices() {
 	await globalThis.eda.sys_Storage.setExtensionUserConfig(DEVICES_STORAGE_KEY, state.devices);
+}
+
+async function saveCapValues() {
+	await globalThis.eda.sys_Storage.setExtensionUserConfig(CAP_VALUES_STORAGE_KEY, state.values);
+}
+
+export async function applyGlobalCapValue(kind, rawValue) {
+	if (kind !== 'bulk' && kind !== 'pin')
+		throw new Error('未知的电容类型。');
+	const value = normalizeCapacitanceValue(rawValue);
+	if (!value)
+		throw new Error('请输入带单位的容量，例如 4.7uF 或 100nF。');
+	state.values[kind] = value;
+	for (const domain of state.domains) {
+		const caps = kind === 'bulk'
+			? domain.bulkCaps
+			: Object.values(domain.pinCaps).flat();
+		for (const cap of caps)
+			cap.value = value;
+	}
+	await saveCapValues();
+	renderAll();
+	renderSelectedDevices();
+	return value;
 }
 
 function librarySelectionKey(selected) {
@@ -451,10 +564,13 @@ async function applyNativeSelectedDevice(kind, selected, restoreWindow = false) 
 	state.devicePicker.kind = null;
 	state.devicePicker.token += 1;
 	await saveDevices();
+	const synchronizedValue = extractDeviceCapacitance(device);
+	if (synchronizedValue)
+		await applyGlobalCapValue(kind, synchronizedValue);
 	renderSelectedDevices();
 	if (restoreWindow)
 		await restoreGeneratorWindow();
-	setSuccess(`已选择${deviceKindLabel(kind)}：${state.devices[kind].name}`);
+	setSuccess(`已选择${deviceKindLabel(kind)}：${state.devices[kind].name}${synchronizedValue ? `，容量已同步为 ${synchronizedValue}` : ''}`);
 }
 
 async function watchNativeDeviceSelection(kind, baselineKey, token) {
@@ -481,7 +597,7 @@ async function watchNativeDeviceSelection(kind, baselineKey, token) {
 		state.devicePicker.token += 1;
 		renderSelectedDevices();
 		await restoreGeneratorWindow();
-		setError('未检测到新的原生库选择。可重新打开器件库，或点击“用当前”采用当前高亮器件。');
+		setError('未检测到新的原生库选择，请重新点击器件按钮后选择。');
 	}
 }
 
@@ -506,17 +622,6 @@ async function openNativeDevicePicker(kind) {
 		state.devicePicker.kind = null;
 		renderSelectedDevices();
 		await restoreGeneratorWindow();
-		setError(error instanceof Error ? error.message : String(error));
-	}
-}
-
-async function useCurrentNativeDevice(kind) {
-	setError('');
-	try {
-		const current = await globalThis.eda.lib_SelectControl.getSelectedLibraryRowInfo();
-		await applyNativeSelectedDevice(kind, current);
-	}
-	catch (error) {
 		setError(error instanceof Error ? error.message : String(error));
 	}
 }
@@ -563,16 +668,49 @@ export function shouldShiftCapacitorAttribute(key) {
 	return ['DESIGNATOR', 'NAME', 'VALUE'].includes(String(key ?? '').trim().toUpperCase());
 }
 
-async function shiftCapacitorTextLeft(componentId, gridSize = 10) {
+export function selectCapacitorTextAttributes(attributes, intendedValue) {
+	const visible = (attributes ?? []).filter((attribute) => {
+		return Number.isFinite(attribute.getState_X?.())
+			&& attribute.getState_ValueVisible?.() !== false;
+	});
+	const designator = visible.find((attribute) => {
+		return String(attribute.getState_Key?.() ?? '').trim().toUpperCase() === 'DESIGNATOR';
+	});
+	const valueCandidates = visible.filter((attribute) => {
+		const key = String(attribute.getState_Key?.() ?? '').trim().toUpperCase();
+		const value = String(attribute.getState_Value?.() ?? '').trim();
+		return key === 'VALUE'
+			|| (key === 'NAME' && (value.toUpperCase().includes('{VALUE}') || value === intendedValue));
+	});
+	const valueAttribute = valueCandidates.find((attribute) => {
+		return String(attribute.getState_Value?.() ?? '').toUpperCase().includes('{VALUE}');
+	}) ?? valueCandidates.find((attribute) => {
+		return String(attribute.getState_Value?.() ?? '').trim() === intendedValue;
+	}) ?? valueCandidates[0];
+	return [...new Map([designator, valueAttribute]
+		.filter(Boolean)
+		.map(attribute => [attribute.getState_PrimitiveId(), attribute])).values()];
+}
+
+export async function shiftCapacitorTextLeft(componentId, intendedValue, gridSize = 10) {
 	const attributes = await globalThis.eda.sch_PrimitiveAttribute.getAll(componentId);
-	for (const attribute of attributes) {
-		if (!shouldShiftCapacitorAttribute(attribute.getState_Key()))
-			continue;
+	const selected = selectCapacitorTextAttributes(attributes, intendedValue);
+	for (const attribute of selected) {
 		const x = attribute.getState_X();
-		if (x === null)
-			continue;
-		await globalThis.eda.sch_PrimitiveAttribute.modify(attribute, { x: x - gridSize });
+		const primitiveId = attribute.getState_PrimitiveId();
+		const targetX = x - gridSize;
+		const modified = await globalThis.eda.sch_PrimitiveAttribute.modify(primitiveId, { x: targetX });
+		if (!modified)
+			throw new Error(`移动电容文字 ${attribute.getState_Key()} 失败。`);
+		let afterX = modified.getState_X?.();
+		if (!Number.isFinite(afterX) || Math.abs(afterX - targetX) > 0.001) {
+			const refreshed = await globalThis.eda.sch_PrimitiveAttribute.get(primitiveId);
+			afterX = refreshed?.getState_X?.();
+		}
+		if (!Number.isFinite(afterX) || Math.abs(afterX - targetX) > 0.001)
+			throw new Error(`电容文字 ${attribute.getState_Key()} 未移动到目标位置。`);
 	}
+	return selected.length;
 }
 
 async function createCapacitorAt(cap, x, y, created) {
@@ -604,7 +742,7 @@ async function prepareCapacitor(component, cap) {
 	if (!rotated)
 		throw new Error(`旋转 ${cap.value} 电容失败。`);
 	await setCapacitorValue(rotated, cap.value);
-	await shiftCapacitorTextLeft(componentId);
+	await shiftCapacitorTextLeft(componentId, cap.value);
 	const pins = await globalThis.eda.sch_PrimitiveComponent.getAllPinsByPrimitiveId(componentId);
 	if (!pins || pins.length !== 2)
 		throw new Error('所选电容器件必须恰好具有两个引脚。');
@@ -818,6 +956,7 @@ async function finalizeAllDomainsPlacement(domains, anchorComponent) {
 		documentUuid: state.input.document.uuid,
 		domains: [],
 		id: nextId('batch'),
+		textLayoutVersion: 1,
 	};
 
 	try {
@@ -835,10 +974,25 @@ async function finalizeAllDomainsPlacement(domains, anchorComponent) {
 			batch.domains.push(await generateDomainBank(domain, preparedAnchor, row.x, row.y, created));
 			totalCaps += caps.length;
 		}
+		let replacedBatches = 0;
+		const replacementFailures = [];
+		for (const previousBatch of getRelevantManifests()) {
+			try {
+				await deletePrimitiveSet(primitivesForBatch(previousBatch));
+				state.manifests = state.manifests.filter(item => item.id !== previousBatch.id);
+				replacedBatches += 1;
+			}
+			catch (error) {
+				replacementFailures.push(error instanceof Error ? error.message : String(error));
+			}
+		}
 		state.manifests.unshift(batch);
 		await saveManifests();
-		setSuccess(`已一次生成 ${domains.length} 个电源网络、${totalCaps} 个电容；每个网络使用独立母线和一个 GND 标志。`);
+		setSuccess(`已生成 ${domains.length} 个电源网络、${totalCaps} 个电容${replacedBatches ? `，并替换 ${replacedBatches} 批旧结果` : ''}。`);
+		if (replacementFailures.length)
+			setError(`新结果已生成，但有 ${replacementFailures.length} 批旧结果未能完整删除，仍保留在生成记录中。`);
 		renderHistory();
+		renderPlanSummary();
 	}
 	catch (error) {
 		await rollback(created);
@@ -853,6 +1007,29 @@ async function finalizeAllDomainsPlacement(domains, anchorComponent) {
 
 function sleep(ms) {
 	return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function componentPoint(component) {
+	return {
+		x: Number(component?.getState_X?.()),
+		y: Number(component?.getState_Y?.()),
+	};
+}
+
+export function selectClosestPlacedComponent(components, point) {
+	const originX = Number(point?.x);
+	const originY = Number(point?.y);
+	if (!Number.isFinite(originX) || !Number.isFinite(originY))
+		return undefined;
+	const sorted = (components ?? [])
+		.map(component => ({ component, point: componentPoint(component) }))
+		.filter(item => Number.isFinite(item.point.x) && Number.isFinite(item.point.y))
+		.sort((left, right) => {
+			const leftDistance = ((left.point.x - originX) ** 2) + ((left.point.y - originY) ** 2);
+			const rightDistance = ((right.point.x - originX) ** 2) + ((right.point.y - originY) ** 2);
+			return leftDistance - rightDistance;
+		});
+	return sorted[0]?.component;
 }
 
 async function waitForPlacedComponent(ignoredIds, timeoutMs = 120000) {
@@ -951,12 +1128,22 @@ async function placeAllDomainsWithMouse(mouseEvent) {
 		await sleep(50);
 		const attachedIds = await EDA.sch_PrimitiveComponent.getAllPrimitiveId();
 		const ignoredIds = new Set([...beforeIds, ...attachedIds]);
-		await waitForPlacedComponent(ignoredIds);
+		const placedComponent = await waitForPlacedComponent(ignoredIds);
+		const placedId = primitiveIdOf(placedComponent);
+		const placedPoint = componentPoint(placedComponent);
 		await finishMousePlacementTool();
 		const settledIds = (await EDA.sch_PrimitiveComponent.getAllPrimitiveId()).filter(id => !beforeIds.has(id));
-		const settledAnchor = settledIds.length
-			? (await EDA.sch_PrimitiveComponent.get(settledIds))[0]
-			: undefined;
+		const settledComponents = settledIds.length
+			? await EDA.sch_PrimitiveComponent.get(settledIds)
+			: [];
+		const likelyAnchors = settledComponents.filter((component) => {
+			const id = primitiveIdOf(component);
+			return id === placedId || !attachedIds.includes(id);
+		});
+		const settledAnchor = selectClosestPlacedComponent(
+			likelyAnchors.length ? likelyAnchors : settledComponents,
+			placedPoint,
+		);
 		if (!settledAnchor)
 			throw new Error('放置工具结束后未找到已落下的锚点电容。');
 		await finalizeAllDomainsPlacement(domains, settledAnchor);
@@ -1003,19 +1190,24 @@ function primitivesForBatch(batch) {
 }
 
 async function deletePrimitiveSet(set = emptyPrimitiveSet()) {
-	try {
-		if (set.wireIds.length)
-			await globalThis.eda.sch_PrimitiveWire.delete([...new Set(set.wireIds)]);
+	const wireIds = [...new Set(set.wireIds)].filter(Boolean);
+	const existingWireIds = new Set(await globalThis.eda.sch_PrimitiveWire.getAllPrimitiveId());
+	for (const id of wireIds) {
+		if (!existingWireIds.has(id))
+			continue;
+		const deleted = await globalThis.eda.sch_PrimitiveWire.delete([id]);
+		if (deleted === false)
+			throw new Error(`删除旧导线 ${id} 失败。`);
 	}
-	catch {
-		// Already missing wires should not prevent manifest cleanup.
-	}
-	try {
-		if (set.componentIds.length)
-			await globalThis.eda.sch_PrimitiveComponent.delete([...new Set(set.componentIds)]);
-	}
-	catch {
-		// Already missing components should not prevent manifest cleanup.
+
+	const componentIds = [...new Set(set.componentIds)].filter(Boolean);
+	const existingComponentIds = new Set(await globalThis.eda.sch_PrimitiveComponent.getAllPrimitiveId());
+	for (const id of componentIds) {
+		if (!existingComponentIds.has(id))
+			continue;
+		const deleted = await globalThis.eda.sch_PrimitiveComponent.delete([id]);
+		if (deleted === false)
+			throw new Error(`删除旧器件 ${id} 失败。`);
 	}
 }
 
@@ -1044,6 +1236,7 @@ async function removeCap(batchId, domainId, capId) {
 		domain.caps = domain.caps.filter(item => item.id !== capId);
 		await saveManifests();
 		renderHistory();
+		renderPlanSummary();
 		return;
 	}
 
@@ -1059,6 +1252,7 @@ async function removeCap(batchId, domainId, capId) {
 			state.manifests = state.manifests.filter(item => item.id !== batchId);
 		await saveManifests();
 		renderHistory();
+		renderPlanSummary();
 		return;
 	}
 
@@ -1075,6 +1269,7 @@ async function removeCap(batchId, domainId, capId) {
 	domain.wireIds = await createConnectedBankWires(busPlan.power, busPlan.ground, created);
 	await saveManifests();
 	renderHistory();
+	renderPlanSummary();
 }
 
 async function removeGeneratedDomain(batchId, domainId) {
@@ -1088,6 +1283,7 @@ async function removeGeneratedDomain(batchId, domainId) {
 		state.manifests = state.manifests.filter(item => item.id !== batchId);
 	await saveManifests();
 	renderHistory();
+	renderPlanSummary();
 }
 
 async function removeBatch(batchId) {
@@ -1098,6 +1294,7 @@ async function removeBatch(batchId) {
 	state.manifests = state.manifests.filter(item => item.id !== batchId);
 	await saveManifests();
 	renderHistory();
+	renderPlanSummary();
 }
 
 function renderHistoryCap(batch, domain, cap) {
@@ -1117,11 +1314,15 @@ function confirmAction(message) {
 	});
 }
 
-function renderHistory() {
-	const relevant = state.manifests.filter(batch => (
+function getRelevantManifests() {
+	return state.manifests.filter(batch => (
 		batch.documentUuid === state.input?.document?.uuid
 		&& batch.chipPrimitiveId === state.input?.selected?.primitiveId
 	));
+}
+
+function renderHistory() {
+	const relevant = getRelevantManifests();
 	const panel = document.querySelector('#historyPanel');
 	panel.hidden = relevant.length === 0;
 	const list = document.querySelector('#historyList');
@@ -1187,11 +1388,15 @@ async function init() {
 			bulk: storedDevices.bulk ?? legacyDevice,
 			pin: storedDevices.pin ?? legacyDevice,
 		};
+		const storedValues = EDA.sys_Storage.getExtensionUserConfig(CAP_VALUES_STORAGE_KEY) ?? {};
+		state.values = {
+			bulk: normalizeCapacitanceValue(storedValues.bulk) || DEFAULT_CAP_VALUES.bulk,
+			pin: normalizeCapacitanceValue(storedValues.pin) || DEFAULT_CAP_VALUES.pin,
+		};
 		state.manifests = EDA.sys_Storage.getExtensionUserConfig(MANIFESTS_STORAGE_KEY) ?? [];
-		state.domains = buildInitialDomains(state.input.selected.pins);
+		state.domains = buildInitialDomains(state.input.selected.pins, state.values);
 		await refreshPrimitiveIdsSnapshot();
 
-		document.querySelector('#componentBadge').textContent = `${state.input.selected.designator} · ${state.input.selected.pins.length} Pins`;
 		document.querySelector('#pinSearch').addEventListener('input', renderPins);
 		document.querySelector('#onlyCandidatesButton').addEventListener('click', (event) => {
 			state.onlyCandidates = !state.onlyCandidates;
@@ -1202,14 +1407,34 @@ async function init() {
 			state.domains.push(createDomain('VDD'));
 			renderAll();
 		});
+		const pinsDrawer = document.querySelector('#pinsDrawer');
+		document.querySelector('#adjustPinsButton').addEventListener('click', () => {
+			pinsDrawer.hidden = false;
+			document.querySelector('#pinSearch').focus();
+		});
+		document.querySelector('#closePinsButton').addEventListener('click', () => {
+			pinsDrawer.hidden = true;
+		});
+		document.addEventListener('keydown', (event) => {
+			if (event.key === 'Escape')
+				pinsDrawer.hidden = true;
+		});
 		document.querySelectorAll('[data-open-native-device]').forEach((button) => {
 			button.addEventListener('click', () => {
 				void openNativeDevicePicker(button.dataset.openNativeDevice);
 			});
 		});
-		document.querySelectorAll('[data-use-current-device]').forEach((button) => {
-			button.addEventListener('click', () => {
-				void useCurrentNativeDevice(button.dataset.useCurrentDevice);
+		document.querySelectorAll('[data-global-cap-value]').forEach((input) => {
+			input.addEventListener('change', async () => {
+				setError('');
+				try {
+					const value = await applyGlobalCapValue(input.dataset.globalCapValue, input.value);
+					setSuccess(`${deviceKindLabel(input.dataset.globalCapValue)}容量已全局更新为 ${value}`);
+				}
+				catch (error) {
+					input.value = state.values[input.dataset.globalCapValue];
+					setError(error instanceof Error ? error.message : String(error));
+				}
 			});
 		});
 		document.querySelector('#placeAllButton').addEventListener('click', (event) => {

@@ -8,6 +8,59 @@ import * as extensionConfig from '../extension.json';
 
 const INPUT_STORAGE_KEY = 'decouplingMeow.generatorInput.v1';
 const IFRAME_ID = 'lceda-decoupling-meow-window';
+const CONTEXT_MENU_HOOK_KEY = '__lcedaDecouplingMeowContextMenuHook';
+const CONTEXT_MENU_TIMER_KEY = '__lcedaDecouplingMeowContextMenuTimer';
+const CONTEXT_MENU_COMMAND = `runRegisteredExtensionFn(${extensionConfig.uuid}.generateForSelectedComponent)`;
+const CONTEXT_MENU_TITLE = '去耦喵';
+const CONTEXT_MENU_GENERATE_TITLE = '生成去耦';
+const CONTEXT_MENU_RETRY_MS = 1000;
+
+interface SchematicContextMenuState {
+	cmdKey?: string;
+	selectedIds?: Array<string>;
+	target?: string | Array<string>;
+}
+
+interface RawContextMenuItem {
+	cmd?: string;
+	icon?: string;
+	submenu?: Array<RawContextMenuItem | string | null>;
+	text?: string;
+}
+
+interface RawContextMenuData {
+	part?: Array<RawContextMenuItem | string | null>;
+	[key: string]: unknown;
+}
+
+type InternalPublish = (topic: string, message: unknown, ...args: Array<unknown>) => unknown;
+type InternalRpcReply = (result: unknown, replyTopic: string, ...args: Array<unknown>) => unknown;
+
+interface InternalMessageBus {
+	publish: InternalPublish;
+	rpcReply: InternalRpcReply;
+	[key: string]: unknown;
+}
+
+interface ContextMenuHookState {
+	originalPublish: InternalPublish;
+	originalRpcReply: InternalRpcReply;
+	version: string;
+}
+
+interface ContextMenuTimerState {
+	timer: ReturnType<typeof setInterval>;
+	version: string;
+}
+
+interface SchematicRuntime {
+	SCH?: {
+		gVars?: {
+			messageBus?: InternalMessageBus;
+		};
+	};
+	[CONTEXT_MENU_TIMER_KEY]?: ContextMenuTimerState;
+}
 
 interface EnetPin {
 	name?: string;
@@ -59,6 +112,101 @@ interface GeneratorInput {
 export function activate(status?: 'onStartupFinished', arg?: string): void {
 	void status;
 	void arg;
+	installSchematicContextMenuHook();
+	const runtime = globalThis as unknown as SchematicRuntime;
+	const existingTimer = runtime[CONTEXT_MENU_TIMER_KEY];
+	if (existingTimer?.version !== extensionConfig.version) {
+		if (existingTimer)
+			clearInterval(existingTimer.timer);
+		runtime[CONTEXT_MENU_TIMER_KEY] = {
+			timer: setInterval(() => {
+				installSchematicContextMenuHook();
+			}, CONTEXT_MENU_RETRY_MS),
+			version: extensionConfig.version,
+		};
+	}
+}
+
+export function deactivate(): void {
+	const runtime = globalThis as unknown as SchematicRuntime;
+	const timerState = runtime[CONTEXT_MENU_TIMER_KEY];
+	if (timerState?.version === extensionConfig.version) {
+		clearInterval(timerState.timer);
+		delete runtime[CONTEXT_MENU_TIMER_KEY];
+	}
+}
+
+function isSingleSchematicComponentContext(context: SchematicContextMenuState | undefined): boolean {
+	const target = Array.isArray(context?.target) ? context.target[0] : context?.target;
+	return (context?.cmdKey === 'part' || target === 'part')
+		&& context?.selectedIds?.length === 1;
+}
+
+export function appendDecouplingContextMenu(
+	menuData: RawContextMenuData | undefined,
+	context: SchematicContextMenuState | undefined,
+): RawContextMenuData | undefined {
+	if (!menuData || !isSingleSchematicComponentContext(context) || !Array.isArray(menuData.part))
+		return menuData;
+	if (menuData.part.some(item => typeof item === 'object' && item?.text === CONTEXT_MENU_TITLE))
+		return menuData;
+
+	const part = [...menuData.part];
+	const extensionItem = {
+		icon: 'eda-component',
+		submenu: [{
+			cmd: CONTEXT_MENU_COMMAND,
+			icon: 'eda-component',
+			text: CONTEXT_MENU_GENERATE_TITLE,
+		}],
+		text: CONTEXT_MENU_TITLE,
+	};
+	const firstSeparator = part.indexOf('menu-sep');
+	if (firstSeparator >= 0)
+		part.splice(firstSeparator + 1, 0, extensionItem, 'menu-sep');
+	else
+		part.unshift(extensionItem, 'menu-sep');
+	return { ...menuData, part };
+}
+
+export function installSchematicContextMenuHook(): boolean {
+	const runtime = globalThis as unknown as SchematicRuntime;
+	const bus = runtime.SCH?.gVars?.messageBus;
+	if (!bus || typeof bus.publish !== 'function' || typeof bus.rpcReply !== 'function')
+		return false;
+
+	const hookRecord = bus as unknown as Record<string, unknown>;
+	const existing = hookRecord[CONTEXT_MENU_HOOK_KEY] as ContextMenuHookState | undefined;
+	if (existing?.version === extensionConfig.version)
+		return true;
+	if (existing) {
+		bus.publish = existing.originalPublish;
+		bus.rpcReply = existing.originalRpcReply;
+	}
+
+	let latestContext: SchematicContextMenuState | undefined;
+	const originalPublish = bus.publish;
+	const originalRpcReply = bus.rpcReply;
+	bus.publish = function (topic, message, ...args) {
+		if (topic === 'showEditorContextMenu') {
+			latestContext = Array.isArray(message)
+				? message[0] as SchematicContextMenuState
+				: message as SchematicContextMenuState;
+		}
+		return originalPublish.call(this, topic, message, ...args);
+	};
+	bus.rpcReply = function (result, replyTopic, ...args) {
+		const nextResult = String(replyTopic).includes('menuData')
+			? appendDecouplingContextMenu(result as RawContextMenuData, latestContext)
+			: result;
+		return originalRpcReply.call(this, nextResult, replyTopic, ...args);
+	};
+	hookRecord[CONTEXT_MENU_HOOK_KEY] = {
+		originalPublish,
+		originalRpcReply,
+		version: extensionConfig.version,
+	} satisfies ContextMenuHookState;
+	return true;
 }
 
 function findEnetComponent(netlist: EnetFile, designator: string): EnetComponent | undefined {
@@ -154,7 +302,7 @@ export async function generateForSelectedComponent(): Promise<void> {
 	try {
 		const input = await collectGeneratorInput();
 		await eda.sys_Storage.setExtensionUserConfig(INPUT_STORAGE_KEY, input);
-		const opened = await eda.sys_IFrame.openIFrame('/iframe/index.html', 1040, 660, IFRAME_ID, {
+		const opened = await eda.sys_IFrame.openIFrame('/iframe/index.html', 800, 540, IFRAME_ID, {
 			grayscaleMask: false,
 			maximizeButton: true,
 			minimizeButton: true,
@@ -175,7 +323,7 @@ export async function generateForSelectedComponent(): Promise<void> {
 
 export function about(): void {
 	eda.sys_Dialog.showInformationMessage(
-		`去耦喵 v${extensionConfig.version}\n\n识别选中芯片的多个电源域，并按用户计划添加电源标签、主电容和逐引脚去耦电容。所有生成内容都可按批次撤销。`,
+		`去耦喵 v${extensionConfig.version}\n\n识别选中芯片的多个电源域，并按用户计划生成主电容、逐引脚去耦电容与连接母线，不修改芯片本体。所有生成内容都可按批次撤销。`,
 		'关于去耦喵',
 	);
 }

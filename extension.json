@@ -3,7 +3,7 @@
 	"uuid": "7f342549d32b4cbca363f63d3b5b734d",
 	"displayName": "去耦喵",
 	"description": "识别选中芯片的多个电源网络，不修改芯片本体，从一个锚点快速生成主电容、去耦电容与独立母线。",
-	"version": "0.5.1",
+	"version": "0.6.3",
 	"publisher": "MeowKJ",
 	"engines": {
 		"eda": "^3.0.0"
@@ -26,7 +26,9 @@
 	},
 	"homepage": "https://github.com/MeowKJ/lceda-decoupling-meow",
 	"bugs": "https://github.com/MeowKJ/lceda-decoupling-meow/issues",
-	"activationEvents": {},
+	"activationEvents": {
+		"onStartupFinished": true
+	},
 	"entry": "./dist/index",
 	"dependentExtensions": {},
 	"headerMenus": {

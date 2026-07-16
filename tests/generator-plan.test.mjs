@@ -8,9 +8,14 @@ import {
 	buildGroundBusPlan,
 	buildInitialDomains,
 	buildSharedBusPlan,
+	extractDeviceCapacitance,
 	isGroundPinName,
 	isPowerCandidate,
+	normalizeCapacitanceValue,
 	orderVerticalPinsByRole,
+	selectCapacitorTextAttributes,
+	selectClosestPlacedComponent,
+	shiftCapacitorTextLeft,
 	shouldShiftCapacitorAttribute,
 	suggestPowerLabel,
 	validateDomains,
@@ -60,6 +65,38 @@ test('creates separate initial domains for different power labels', () => {
 	assert.equal(domains[0].bulkCaps[0].value, '4.7uF');
 });
 
+test('uses persisted global capacitance values for newly recognized domains', () => {
+	const [domain] = buildInitialDomains([pin(1, 'VDD')], { bulk: '10uF', pin: '220nF' });
+	assert.equal(domain.bulkCaps[0].value, '10uF');
+	assert.equal(domain.pinCaps['1'][0].value, '220nF');
+});
+
+test('normalizes capacitance values without confusing package numbers', () => {
+	assert.equal(normalizeCapacitanceValue('4.7 μF'), '4.7uF');
+	assert.equal(normalizeCapacitanceValue('4u7'), '4.7uF');
+	assert.equal(normalizeCapacitanceValue('104', true), '100nF');
+	assert.equal(normalizeCapacitanceValue('0603', true), '');
+});
+
+test('imports capacitance from trusted native device parameters', () => {
+	assert.equal(extractDeviceCapacitance({ property: { otherProperty: { Value: '100nF' } } }), '100nF');
+	assert.equal(extractDeviceCapacitance({ property: { otherProperty: { 容量: '4.7uF' } } }), '4.7uF');
+	assert.equal(extractDeviceCapacitance({ attributes: { Capacitance: '104' } }), '100nF');
+	assert.equal(extractDeviceCapacitance({ name: 'Cap_0603', description: 'C0603mini' }), '');
+	assert.equal(extractDeviceCapacitance({ description: 'MLCC 10uF 10V X5R' }), '10uF');
+});
+
+test('matches the settled anchor by nearest placement coordinate after draw_end', () => {
+	const component = (id, x, y) => ({
+		getState_PrimitiveId: () => id,
+		getState_X: () => x,
+		getState_Y: () => y,
+	});
+	const far = component('new-far', 500, 500);
+	const closest = component('new-anchor', 102, 198);
+	assert.equal(selectClosestPlacedComponent([far, closest], { x: 100, y: 200 }), closest);
+});
+
 test('orders bulk capacitors before per-pin capacitors in a connected bank', () => {
 	const [domain] = buildInitialDomains([pin(1, 'VDD'), pin(2, 'VDD')]);
 	const plan = buildBankPlan(domain);
@@ -94,6 +131,73 @@ test('moves only capacitor designator and value attributes', () => {
 	assert.equal(shouldShiftCapacitorAttribute('Value'), true);
 	assert.equal(shouldShiftCapacitorAttribute('  value  '), true);
 	assert.equal(shouldShiftCapacitorAttribute('Supplier Part'), false);
+});
+
+function attribute(id, key, value, x, visible = true) {
+	return {
+		getState_Key: () => key,
+		getState_PrimitiveId: () => id,
+		getState_Value: () => value,
+		getState_ValueVisible: () => visible,
+		getState_X: () => x,
+	};
+}
+
+test('selects one visible designator and one displayed capacitor value', () => {
+	const attributes = [
+		attribute('designator', 'Designator', 'C1', 100),
+		attribute('name', 'Name', '={Value}', 100),
+		attribute('value-hidden', 'Value', '100nF', 100, false),
+		attribute('device-name', 'Name', 'Capacitor', 100),
+	];
+	assert.deepEqual(
+		selectCapacitorTextAttributes(attributes, '100nF').map(item => item.getState_PrimitiveId()),
+		['designator', 'name'],
+	);
+});
+
+test('verifies capacitor text movement through the attribute API', async () => {
+	const previousEda = globalThis.eda;
+	const moves = [];
+	const attributes = [
+		attribute('designator', 'Designator', 'C1', 100),
+		attribute('name', 'Name', '={Value}', 120),
+		attribute('bad-coordinate', 'Value', '100nF', undefined),
+	];
+	globalThis.eda = {
+		sch_PrimitiveAttribute: {
+			get: async () => undefined,
+			getAll: async () => attributes,
+			modify: async (id, property) => {
+				moves.push([id, property.x]);
+				return attribute(id, id === 'designator' ? 'Designator' : 'Name', '', property.x);
+			},
+		},
+	};
+	try {
+		assert.equal(await shiftCapacitorTextLeft('C1', '100nF'), 2);
+		assert.deepEqual(moves, [['designator', 90], ['name', 110]]);
+	}
+	finally {
+		globalThis.eda = previousEda;
+	}
+});
+
+test('fails generation when the attribute move is not applied', async () => {
+	const previousEda = globalThis.eda;
+	globalThis.eda = {
+		sch_PrimitiveAttribute: {
+			get: async () => undefined,
+			getAll: async () => [attribute('designator', 'Designator', 'C1', 100)],
+			modify: async () => undefined,
+		},
+	};
+	try {
+		await assert.rejects(() => shiftCapacitorTextLeft('C1', '100nF'), /移动电容文字 Designator 失败/);
+	}
+	finally {
+		globalThis.eda = previousEda;
+	}
 });
 
 test('builds one continuous ground bus with one shared flag point', () => {

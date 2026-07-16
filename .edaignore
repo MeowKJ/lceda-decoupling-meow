@@ -2,11 +2,13 @@
 /.github/
 /.husky/
 /.vscode/
+/.playwright-cli/
 /build/
 /config/
 /coverage/
 /docs/
 /node_modules/
+/output/
 /src/
 /tests/
 /.editorconfig

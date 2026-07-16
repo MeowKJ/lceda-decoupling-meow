@@ -74,4 +74,38 @@ test('opens the generator when the selected component is absent from the netlist
 	assert.equal(calls.stored[0][1].selected.pins[0].name, 'VDD');
 	assert.equal(calls.opened.length, 1);
 	assert.equal(calls.opened[0][0], '/iframe/index.html');
+	assert.equal(calls.opened[0][1], 800);
+	assert.equal(calls.opened[0][2], 540);
+});
+
+test('adds one native schematic context-menu action for a single component', async () => {
+	const replies = [];
+	const bus = {
+		publish: () => true,
+		rpcReply: (...args) => replies.push(args),
+	};
+	const bundle = await readFile(new URL('../dist/index.js', import.meta.url), 'utf8');
+	const extension = vm.runInNewContext(`${bundle}\nedaEsbuildExportName`, {
+		EDA: {},
+		SCH: { gVars: { messageBus: bus } },
+		setInterval: () => 1,
+	});
+
+	assert.equal(extension.installSchematicContextMenuHook(), true);
+	bus.publish('showEditorContextMenu', [{ cmdKey: 'part', selectedIds: ['U1'], target: ['part'] }]);
+	bus.rpcReply({ part: [{ cmd: 'copy', text: 'Copy' }, 'menu-sep', { cmd: 'delete', text: 'Delete' }] }, '_MSG_BUS_RPC_-menuData-test');
+
+	const menu = replies[0][0].part;
+	const itemIndex = menu.findIndex(item => typeof item === 'object' && item?.text === '去耦喵');
+	assert.equal(itemIndex, 2);
+	assert.equal(menu[itemIndex].submenu[0].text, '生成去耦');
+	assert.equal(menu[itemIndex].submenu[0].cmd, 'runRegisteredExtensionFn(7f342549d32b4cbca363f63d3b5b734d.generateForSelectedComponent)');
+	assert.equal(menu[itemIndex + 1], 'menu-sep');
+	bus.publish('showEditorContextMenu', [{ cmdKey: 'wire', selectedIds: ['wire-1'], target: ['wire'] }]);
+	bus.rpcReply({ wire: [{ cmd: 'copy', text: 'Copy' }] }, '_MSG_BUS_RPC_-menuData-wire');
+	assert.deepEqual(replies[1][0].wire, [{ cmd: 'copy', text: 'Copy' }]);
+	bus.publish('showEditorContextMenu', [{ cmdKey: 'part', selectedIds: ['U1', 'U2'], target: ['part'] }]);
+	bus.rpcReply({ part: [{ cmd: 'copy', text: 'Copy' }] }, '_MSG_BUS_RPC_-menuData-multiple');
+	assert.equal(replies[2][0].part.length, 1);
+	assert.equal(extension.installSchematicContextMenuHook(), true);
 });
