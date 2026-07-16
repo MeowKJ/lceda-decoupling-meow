@@ -14,6 +14,11 @@ test('invokes mouse placement before asynchronous UI work', async () => {
 	assert.ok(hideWindow > placement);
 	assert.match(bundle, /doCommand\(['"]draw_end['"]\)/);
 	assert.match(bundle, /getSelectedLibraryRowInfo/);
+	assert.match(bundle, /openBottomPanel/);
+	assert.match(bundle, /ESYS_BottomPanelTab/);
+	assert.match(bundle, /watchNativeDeviceSelection/);
+	assert.match(bundle, /useCurrentNativeDevice/);
+	assert.match(bundle, /hideIFrame/);
 	assert.match(bundle, /capacitorDevices\.v2/);
 	assert.match(bundle, /for \(const drop of groundPlan\.drops\)/);
 	assert.match(bundle, /placeAllDomainsWithMouse/);

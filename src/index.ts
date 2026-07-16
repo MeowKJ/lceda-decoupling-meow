@@ -154,7 +154,7 @@ export async function generateForSelectedComponent(): Promise<void> {
 	try {
 		const input = await collectGeneratorInput();
 		await eda.sys_Storage.setExtensionUserConfig(INPUT_STORAGE_KEY, input);
-		const opened = await eda.sys_IFrame.openIFrame('/iframe/index.html', 1180, 820, IFRAME_ID, {
+		const opened = await eda.sys_IFrame.openIFrame('/iframe/index.html', 1080, 720, IFRAME_ID, {
 			grayscaleMask: false,
 			maximizeButton: true,
 			minimizeButton: true,

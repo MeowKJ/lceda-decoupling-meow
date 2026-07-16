@@ -21,6 +21,11 @@ const state = {
 		bulk: null,
 		pin: null,
 	},
+	devicePicker: {
+		baselineKey: '',
+		kind: null,
+		token: 0,
+	},
 	domains: [],
 	input: null,
 	manifests: [],
@@ -147,12 +152,6 @@ function setSuccess(message = '') {
 	const banner = document.querySelector('#successBanner');
 	banner.hidden = !message;
 	banner.textContent = message;
-}
-
-function setLoading(loading, title = '去耦喵正在生成…', detail = '请不要关闭窗口。') {
-	document.querySelector('#loadingOverlay').hidden = !loading;
-	document.querySelector('#loadingTitle').textContent = title;
-	document.querySelector('#loadingDetail').textContent = detail;
 }
 
 function candidateBadge(pin) {
@@ -407,6 +406,13 @@ function deviceForCap(cap) {
 function renderSelectedDevice(kind) {
 	const device = state.devices[kind];
 	const element = document.querySelector(`[data-selected-device="${kind}"]`);
+	const button = document.querySelector(`[data-open-native-device="${kind}"]`);
+	if (button) {
+		const active = state.devicePicker.kind === kind;
+		button.textContent = active ? '等待选择…' : '选择器件';
+		button.classList.toggle('picker-active', active);
+		button.disabled = active;
+	}
 	if (!device) {
 		element.textContent = `尚未选择${deviceKindLabel(kind)}器件。`;
 		element.classList.remove('ready');
@@ -425,30 +431,93 @@ async function saveDevices() {
 	await globalThis.eda.sys_Storage.setExtensionUserConfig(DEVICES_STORAGE_KEY, state.devices);
 }
 
-async function useNativeSelectedDevice(kind) {
-	setError('');
-	setLoading(true, '正在读取嘉立创原生器件库…', deviceKindLabel(kind));
-	try {
+function librarySelectionKey(selected) {
+	return selected?.uuid && selected.libraryUuid
+		? `${selected.libraryUuid}:${selected.uuid}`
+		: '';
+}
+
+async function applyNativeSelectedDevice(kind, selected, restoreWindow = false) {
+	if (!selected?.uuid || !selected.libraryUuid)
+		throw new Error('请在嘉立创 EDA 原生器件库中点选一个电容器件。');
+	const device = await globalThis.eda.lib_Device.get(selected.uuid, selected.libraryUuid);
+	if (!device)
+		throw new Error('原生库当前选中项不是可用器件，请选择一个两引脚电容器件。');
+	state.devices[kind] = minimalDevice({
+		...device,
+		libraryUuid: selected.libraryUuid,
+		uuid: selected.uuid,
+	});
+	state.devicePicker.kind = null;
+	state.devicePicker.token += 1;
+	await saveDevices();
+	renderSelectedDevices();
+	if (restoreWindow)
+		await restoreGeneratorWindow();
+	setSuccess(`已选择${deviceKindLabel(kind)}：${state.devices[kind].name}`);
+}
+
+async function watchNativeDeviceSelection(kind, baselineKey, token) {
+	const expiresAt = Date.now() + 120000;
+	while (Date.now() < expiresAt && state.devicePicker.token === token) {
 		const selected = await globalThis.eda.lib_SelectControl.getSelectedLibraryRowInfo();
-		if (!selected?.uuid || !selected.libraryUuid)
-			throw new Error('请先在嘉立创 EDA 底部器件库中点选一个电容器件。');
-		const device = await globalThis.eda.lib_Device.get(selected.uuid, selected.libraryUuid);
-		if (!device)
-			throw new Error('原生库当前选中项不是可用器件，请选择一个两引脚电容器件。');
-		state.devices[kind] = minimalDevice({
-			...device,
-			libraryUuid: selected.libraryUuid,
-			uuid: selected.uuid,
-		});
-		await saveDevices();
-		renderSelectedDevice(kind);
-		setSuccess(`已将原生库当前器件用于${deviceKindLabel(kind)}。`);
+		const key = librarySelectionKey(selected);
+		if (key && key !== baselineKey) {
+			try {
+				await applyNativeSelectedDevice(kind, selected, true);
+			}
+			catch (error) {
+				state.devicePicker.kind = null;
+				renderSelectedDevices();
+				await restoreGeneratorWindow();
+				setError(error instanceof Error ? error.message : String(error));
+			}
+			return;
+		}
+		await sleep(300);
+	}
+	if (state.devicePicker.token === token) {
+		state.devicePicker.kind = null;
+		state.devicePicker.token += 1;
+		renderSelectedDevices();
+		await restoreGeneratorWindow();
+		setError('未检测到新的原生库选择。可重新打开器件库，或点击“用当前”采用当前高亮器件。');
+	}
+}
+
+async function openNativeDevicePicker(kind) {
+	setError('');
+	try {
+		const current = await globalThis.eda.lib_SelectControl.getSelectedLibraryRowInfo();
+		state.devicePicker.kind = kind;
+		state.devicePicker.baselineKey = librarySelectionKey(current);
+		state.devicePicker.token += 1;
+		const token = state.devicePicker.token;
+		globalThis.eda.sys_PanelControl.openBottomPanel(
+			globalThis.ESYS_BottomPanelTab?.LIBRARY ?? 'library',
+		);
+		renderSelectedDevices();
+		setSuccess(`已打开下方原生器件库：请选择${deviceKindLabel(kind)}，选中后自动返回。`);
+		await globalThis.eda.sys_Message.showToastMessage(`请在原生器件库中选择${deviceKindLabel(kind)}，去耦喵会自动返回。`);
+		await globalThis.eda.sys_IFrame.hideIFrame(IFRAME_ID);
+		void watchNativeDeviceSelection(kind, state.devicePicker.baselineKey, token);
+	}
+	catch (error) {
+		state.devicePicker.kind = null;
+		renderSelectedDevices();
+		await restoreGeneratorWindow();
+		setError(error instanceof Error ? error.message : String(error));
+	}
+}
+
+async function useCurrentNativeDevice(kind) {
+	setError('');
+	try {
+		const current = await globalThis.eda.lib_SelectControl.getSelectedLibraryRowInfo();
+		await applyNativeSelectedDevice(kind, current);
 	}
 	catch (error) {
 		setError(error instanceof Error ? error.message : String(error));
-	}
-	finally {
-		setLoading(false);
 	}
 }
 
@@ -1122,9 +1191,14 @@ async function init() {
 			state.domains.push(createDomain('VDD'));
 			renderAll();
 		});
-		document.querySelectorAll('[data-use-native-device]').forEach((button) => {
+		document.querySelectorAll('[data-open-native-device]').forEach((button) => {
 			button.addEventListener('click', () => {
-				void useNativeSelectedDevice(button.dataset.useNativeDevice);
+				void openNativeDevicePicker(button.dataset.openNativeDevice);
+			});
+		});
+		document.querySelectorAll('[data-use-current-device]').forEach((button) => {
+			button.addEventListener('click', () => {
+				void useCurrentNativeDevice(button.dataset.useCurrentDevice);
 			});
 		});
 		document.querySelector('#placeAllButton').addEventListener('click', (event) => {

@@ -1,6 +1,6 @@
 {
 	"name": "lceda-decoupling-meow",
-	"version": "0.3.0",
+	"version": "0.4.0",
 	"description": "去耦喵：一次为选中 IC 的多个电源网络生成可选主电容和逐引脚去耦电容",
 	"author": "MeowKJ",
 	"license": "Apache-2.0",

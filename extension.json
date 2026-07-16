@@ -2,8 +2,8 @@
 	"name": "lceda-decoupling-meow",
 	"uuid": "7f342549d32b4cbca363f63d3b5b734d",
 	"displayName": "去耦喵",
-	"description": "识别选中芯片的多个电源网络，使用原生器件库分别选择主电容与去耦电容，并从一个锚点一次生成独立母线。",
-	"version": "0.3.0",
+	"description": "识别选中芯片的多个电源网络，打开原生器件库分别选择主电容与去耦电容，并从一个锚点一次生成独立母线。",
+	"version": "0.4.0",
 	"publisher": "MeowKJ",
 	"engines": {
 		"eda": "^3.0.0"

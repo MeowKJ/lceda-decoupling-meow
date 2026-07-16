@@ -30,7 +30,8 @@ SCH_SelectControl.getAllSelectedPrimitives()
              用户编辑多电源域生成计划
                          │
                          ▼
-       LIB_Device.search() 选择电容器件
+ sys_PanelControl.openBottomPanel(LIBRARY)
+  + lib_SelectControl 读取原生库选择
                          │
                          ▼
   createNetFlag() + PrimitiveComponent.create()
@@ -64,7 +65,9 @@ GND、VSS、AGND等地引脚会从候选中排除。
 - 每个电源域：`4.7uF × 1` 主电容；
 - 每个电源引脚：`100nF × 1` 去耦电容；
 - 接地标签：`GND`；
-- 电容库器件：通过 `lib_SelectControl.getSelectedLibraryRowInfo()` 读取嘉立创 EDA 底部原生器件库当前选中行，并分别缓存主电容与引脚去耦器件的 `{ libraryUuid, uuid }`。
+- 电容库器件：点击“选择器件”时通过 `sys_PanelControl.openBottomPanel(ESYS_BottomPanelTab.LIBRARY)` 打开嘉立创 EDA 底部原生库，并临时隐藏生成窗口；随后轮询 `lib_SelectControl.getSelectedLibraryRowInfo()`，检测到用户点中不同器件后自动回填并恢复窗口，分别缓存主电容与引脚去耦器件的 `{ libraryUuid, uuid }`。
+
+官方 API 没有提供“原生库选择完成”的回调，因此界面通过轮询检测选择变化，并提供独立的“用当前”按钮采用当前已高亮行。
 
 ## 鼠标落位与创建事务
 

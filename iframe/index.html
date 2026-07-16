@@ -10,10 +10,10 @@
 		<main class="app-shell">
 			<header class="hero">
 				<div class="brand-mark" aria-hidden="true"><span></span><span></span><b>ฅ</b></div>
-				<div>
-					<p class="eyebrow">DECOUPLING GENERATOR</p>
+				<div class="brand-copy">
+					<p class="eyebrow">DECOUPLING MEOW</p>
 					<h1>去耦喵</h1>
-					<p class="subtitle">识别多个电源域，确认计划后一次生成标签与电容。</p>
+					<p class="subtitle">多电源域去耦阵列生成器</p>
 				</div>
 				<div id="componentBadge" class="component-badge">正在读取…</div>
 			</header>
@@ -61,8 +61,8 @@
 			<section class="panel generator-panel">
 				<div class="panel-heading">
 					<div>
-					<p class="section-kicker">STEP 3</p>
-					<h2>选择两类电容器件并人工放置</h2>
+						<p class="section-kicker">STEP 3</p>
+						<h2>选择器件并放置</h2>
 					</div>
 					<span class="read-only-chip">不会检查或删除原有器件</span>
 				</div>
@@ -70,17 +70,23 @@
 				<div class="generator-grid">
 					<div class="device-picker">
 						<label>嘉立创 EDA 原生器件库</label>
-						<p class="native-picker-help">先在编辑器底部器件库中搜索并点选器件，再回到这里读取；两个类别可使用不同符号和封装。</p>
+						<p class="native-picker-help">点击“选择器件”会暂时隐藏本窗口并打开底部原生库；点中器件后自动返回。两类电容可分别选择。</p>
 						<div class="device-slots">
 							<div class="device-slot">
-								<strong>主电容</strong>
+								<div class="device-slot-title"><strong>主电容</strong><span>Bulk</span></div>
 								<div class="selected-device" data-selected-device="bulk">尚未选择</div>
-								<button class="secondary-button" data-use-native-device="bulk" type="button">读取原生库当前器件</button>
+								<div class="device-actions">
+									<button class="secondary-button" data-open-native-device="bulk" type="button">选择器件</button>
+									<button class="ghost-button" data-use-current-device="bulk" type="button">用当前</button>
+								</div>
 							</div>
 							<div class="device-slot">
-								<strong>引脚去耦</strong>
+								<div class="device-slot-title"><strong>引脚去耦</strong><span>Bypass</span></div>
 								<div class="selected-device" data-selected-device="pin">尚未选择</div>
-								<button class="secondary-button" data-use-native-device="pin" type="button">读取原生库当前器件</button>
+								<div class="device-actions">
+									<button class="secondary-button" data-open-native-device="pin" type="button">选择器件</button>
+									<button class="ghost-button" data-use-current-device="pin" type="button">用当前</button>
+								</div>
 							</div>
 						</div>
 					</div>
@@ -93,8 +99,8 @@
 					</div>
 
 					<div class="generate-actions">
-						<strong>一次完成全部网络</strong>
-						<p>只需人工确定一个锚点，各电源网络会按行排列且彼此隔离；任一网络失败会回滚整批。</p>
+						<strong>全部网络，一次完成</strong>
+						<p>人工确定一个锚点，各电源网络按行排列并保持隔离；失败时自动回滚整批。</p>
 						<button id="placeAllButton" class="primary-button" type="button">添加电容</button>
 					</div>
 				</div>
@@ -115,14 +121,6 @@
 				<a href="https://github.com/MeowKJ/lceda-decoupling-meow">GitHub</a>
 			</footer>
 		</main>
-
-		<div id="loadingOverlay" class="loading-overlay" hidden>
-			<div class="loader-card" role="status" aria-live="polite">
-				<div class="paw-loader"><span></span><span></span><span></span></div>
-				<strong id="loadingTitle">去耦喵正在生成…</strong>
-				<p id="loadingDetail">请不要关闭窗口。</p>
-			</div>
-		</div>
 
 		<script src="/dist/iframe.js"></script>
 	</body>
