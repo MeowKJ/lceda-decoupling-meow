@@ -5,6 +5,7 @@ import test from 'node:test';
 
 test('invokes mouse placement before asynchronous UI work', async () => {
 	const bundle = await readFile(new URL('../dist/iframe.js', import.meta.url), 'utf8');
+	const source = await readFile(new URL('../iframe/app.mjs', import.meta.url), 'utf8');
 	const placement = bundle.indexOf('placeComponentWithMouse');
 	const followTip = bundle.indexOf('showFollowMouseTip', placement);
 	const hideWindow = bundle.indexOf('hideIFrame', placement);
@@ -23,4 +24,6 @@ test('invokes mouse placement before asynchronous UI work', async () => {
 	assert.match(bundle, /for \(const drop of groundPlan\.drops\)/);
 	assert.match(bundle, /placeAllDomainsWithMouse/);
 	assert.match(bundle, /totalCaps/);
+	assert.match(bundle, /buildSharedBusPlan/);
+	assert.doesNotMatch(source, /createPowerFlag\(domain\.label, pin\.x, pin\.y\)/);
 });

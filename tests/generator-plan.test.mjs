@@ -7,6 +7,7 @@ import {
 	buildDomainRowOrigins,
 	buildGroundBusPlan,
 	buildInitialDomains,
+	buildSharedBusPlan,
 	isGroundPinName,
 	isPowerCandidate,
 	orderVerticalPinsByRole,
@@ -102,14 +103,35 @@ test('builds one continuous ground bus with one shared flag point', () => {
 	]);
 });
 
+test('uses the longest capacitor endpoints for both shared buses', () => {
+	const plan = buildSharedBusPlan([
+		{ x: 10, powerY: 20, groundY: -20 },
+		{ x: 50, powerY: 35, groundY: -35 },
+		{ x: 90, powerY: 25, groundY: -25 },
+	]);
+
+	assert.deepEqual(plan.power.flag, { x: -10, y: 35 });
+	assert.deepEqual(plan.power.bus, [-10, 35, 90, 35]);
+	assert.deepEqual(plan.power.drops, [
+		[10, 20, 10, 35],
+		[90, 25, 90, 35],
+	]);
+	assert.deepEqual(plan.ground.flag, { x: -10, y: -35 });
+	assert.deepEqual(plan.ground.bus, [-10, -35, 90, -35]);
+	assert.deepEqual(plan.ground.drops, [
+		[10, -20, 10, -35],
+		[90, -25, 90, -35],
+	]);
+});
+
 test('lays every selected power network on its own row from one anchor', () => {
 	const domains = [{ label: 'VDD' }, { label: 'VDDA' }, { label: 'VCORE' }];
 	const rows = buildDomainRowOrigins(domains, 500, 300);
 
 	assert.deepEqual(rows.map(row => [row.domain.label, row.x, row.y]), [
 		['VDD', 500, 300],
-		['VDDA', 500, 200],
-		['VCORE', 500, 100],
+		['VDDA', 500, 170],
+		['VCORE', 500, 40],
 	]);
 });
 

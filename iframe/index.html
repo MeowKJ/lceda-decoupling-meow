@@ -11,9 +11,8 @@
 			<header class="hero">
 				<div class="brand-mark" aria-hidden="true"><span></span><span></span><b>ฅ</b></div>
 				<div class="brand-copy">
-					<p class="eyebrow">DECOUPLING MEOW</p>
 					<h1>去耦喵</h1>
-					<p class="subtitle">多电源域去耦阵列生成器</p>
+					<p class="subtitle">多电源域去耦阵列</p>
 				</div>
 				<div id="componentBadge" class="component-badge">正在读取…</div>
 			</header>
@@ -30,7 +29,7 @@
 						</div>
 						<span id="selectedPinCount" class="tiny-badge">0</span>
 					</div>
-					<p class="panel-help">自动识别只是建议。可勾选任意引脚，并分配到不同电源域。</p>
+					<p class="panel-help">勾选引脚并分配电源域。</p>
 					<div class="pin-filter-row">
 						<input id="pinSearch" type="search" placeholder="筛选引脚…" />
 						<button id="onlyCandidatesButton" class="ghost-button active" type="button">只看候选</button>
@@ -46,7 +45,7 @@
 						</div>
 						<button id="addDomainButton" class="secondary-button" type="button">＋ 新增电源域</button>
 					</div>
-					<p class="panel-help">每个电源域可选择或自定义标签，并独立增删主电容和逐引脚去耦。</p>
+					<p class="panel-help">配置标签、主电容和逐引脚去耦。</p>
 					<datalist id="labelPresets">
 						<option value="+1V0"></option><option value="+1V1"></option><option value="+1V2"></option>
 						<option value="+1V8"></option><option value="+2V5"></option><option value="+3V3"></option>
@@ -62,15 +61,14 @@
 				<div class="panel-heading">
 					<div>
 						<p class="section-kicker">STEP 3</p>
-						<h2>选择器件并放置</h2>
+						<h2>器件与生成</h2>
 					</div>
-					<span class="read-only-chip">不会检查或删除原有器件</span>
 				</div>
 
 				<div class="generator-grid">
 					<div class="device-picker">
 						<label>嘉立创 EDA 原生器件库</label>
-						<p class="native-picker-help">点击“选择器件”会暂时隐藏本窗口并打开底部原生库；点中器件后自动返回。两类电容可分别选择。</p>
+						<p class="native-picker-help">选择时自动切到原生库，点中后返回。</p>
 						<div class="device-slots">
 							<div class="device-slot">
 								<div class="device-slot-title"><strong>主电容</strong><span>Bulk</span></div>
@@ -92,16 +90,16 @@
 					</div>
 
 					<div class="placement-settings">
-						<label>放置方式</label>
-						<div class="placement-preview"><span>公共电源母线</span><b>─┬─┬─┬─</b><small>电容竖排 · 公共 GND 母线 · 单个 GND 标志</small></div>
+						<label>阵列布局</label>
+						<div class="placement-preview"><b>─┬─┬─┬─</b><span>最长器件上下端对齐母线 · 单 GND</span></div>
 						<div id="planSummary" class="plan-summary"></div>
-						<p class="placement-note">点击一次“添加电容”，首个网络的锚点会跟随鼠标；落位后将所有已选择网络按独立行一次生成。</p>
+						<p class="placement-note">不修改芯片，不在芯片引脚添加标签。</p>
 					</div>
 
 					<div class="generate-actions">
-						<strong>全部网络，一次完成</strong>
-						<p>人工确定一个锚点，各电源网络按行排列并保持隔离；失败时自动回滚整批。</p>
-						<button id="placeAllButton" class="primary-button" type="button">添加电容</button>
+						<strong>快速完成</strong>
+						<p>选择一个锚点，一次生成全部网络。</p>
+						<button id="placeAllButton" class="primary-button" type="button">快速生成全部</button>
 					</div>
 				</div>
 			</section>

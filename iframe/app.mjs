@@ -610,24 +610,6 @@ export function orderVerticalPinsByRole(pins) {
 	};
 }
 
-async function alignCapToPowerBus(placed, powerBusY) {
-	const deltaY = powerBusY - placed.powerPin.getState_Y();
-	if (Math.abs(deltaY) < 0.001)
-		return placed;
-	const [component] = await globalThis.eda.sch_PrimitiveComponent.get([placed.componentId]);
-	if (!component)
-		throw new Error(`无法重新读取 ${placed.cap.value} 电容。`);
-	const moved = await globalThis.eda.sch_PrimitiveComponent.modify(placed.componentId, {
-		x: component.getState_X(),
-		y: component.getState_Y() + deltaY,
-	});
-	if (!moved)
-		throw new Error(`无法对齐 ${placed.cap.value} 电容的电源引脚。`);
-	const pins = await globalThis.eda.sch_PrimitiveComponent.getAllPinsByPrimitiveId(placed.componentId);
-	const { groundPin, powerPin } = orderVerticalPinsByRole(pins);
-	return { ...placed, groundPin, powerPin };
-}
-
 export function buildGroundBusPlan(points, clearance = 20) {
 	if (!points?.length)
 		throw new Error('接地母线至少需要一个连接点。');
@@ -641,7 +623,35 @@ export function buildGroundBusPlan(points, clearance = 20) {
 	};
 }
 
-export function buildDomainRowOrigins(domains, anchorX, anchorY, rowPitch = 100) {
+export function buildSharedBusPlan(points, sideMargin = 20) {
+	if (!points?.length)
+		throw new Error('母线至少需要一个电容连接点。');
+	const longest = [...points].sort((a, b) => {
+		return (b.powerY - b.groundY) - (a.powerY - a.groundY);
+	})[0];
+	const flagX = Math.min(...points.map(point => point.x)) - sideMargin;
+	const rightX = Math.max(...points.map(point => point.x));
+	const powerY = longest.powerY;
+	const groundY = longest.groundY;
+	return {
+		ground: {
+			bus: [flagX, groundY, rightX, groundY],
+			drops: points
+				.filter(point => Math.abs(point.groundY - groundY) > 0.001)
+				.map(point => [point.x, point.groundY, point.x, groundY]),
+			flag: { x: flagX, y: groundY },
+		},
+		power: {
+			bus: [flagX, powerY, rightX, powerY],
+			drops: points
+				.filter(point => Math.abs(point.powerY - powerY) > 0.001)
+				.map(point => [point.x, point.powerY, point.x, powerY]),
+			flag: { x: flagX, y: powerY },
+		},
+	};
+}
+
+export function buildDomainRowOrigins(domains, anchorX, anchorY, rowPitch = 130) {
 	return (domains ?? []).map((domain, index) => ({
 		domain,
 		x: anchorX,
@@ -658,9 +668,11 @@ async function createWire(line, net, created) {
 	return id;
 }
 
-async function createConnectedBankWires(powerBus, groundPlan, created) {
+async function createConnectedBankWires(powerPlan, groundPlan, created) {
 	const beforeIds = new Set(await globalThis.eda.sch_PrimitiveWire.getAllPrimitiveId());
-	await createWire(powerBus, undefined, created);
+	await createWire(powerPlan.bus ?? powerPlan, undefined, created);
+	for (const drop of powerPlan.drops ?? [])
+		await createWire(drop, undefined, created);
 	await createWire(groundPlan.bus, undefined, created);
 	for (const drop of groundPlan.drops)
 		await createWire(drop, undefined, created);
@@ -729,12 +741,10 @@ function domainPlacementErrors(domain) {
 
 async function generateDomainBank(domain, preparedAnchor, anchorX, anchorY, created) {
 	const caps = buildBankPlan(domain);
-	let placedCaps = [preparedAnchor];
+	const placedCaps = [preparedAnchor];
 	for (const [index, cap] of caps.slice(1).entries()) {
-		placedCaps.push(await createCapacitorAt(cap, anchorX + (index + 1) * 35, anchorY, created));
+		placedCaps.push(await createCapacitorAt(cap, anchorX + (index + 1) * 40, anchorY, created));
 	}
-	const powerBusY = placedCaps[0].powerPin.getState_Y();
-	placedCaps = await Promise.all(placedCaps.map(cap => alignCapToPowerBus(cap, powerBusY)));
 
 	const domainManifest = {
 		bankPowerLabelId: '',
@@ -747,34 +757,20 @@ async function generateDomainBank(domain, preparedAnchor, anchorX, anchorY, crea
 		powerLabelIds: [],
 		wireIds: [],
 	};
-	for (const pinNumber of domain.pinNumbers) {
-		const pin = getPin(pinNumber);
-		if (!pin)
-			continue;
-		const labelId = await createPowerFlag(domain.label, pin.x, pin.y);
-		created.componentIds.push(labelId);
-		domainManifest.powerLabelIds.push(labelId);
-	}
-
-	const powerPins = placedCaps.map(item => item.powerPin);
-	const leftX = Math.min(...powerPins.map(pin => pin.getState_X())) - 20;
-	const rightX = Math.max(...powerPins.map(pin => pin.getState_X()));
-	const bankPowerLabelId = await createPowerFlag(domain.label, leftX, powerBusY);
+	const busPlan = buildSharedBusPlan(placedCaps.map(placed => ({
+		groundY: placed.groundPin.getState_Y(),
+		powerY: placed.powerPin.getState_Y(),
+		x: placed.powerPin.getState_X(),
+	})));
+	const bankPowerLabelId = await createPowerFlag(domain.label, busPlan.power.flag.x, busPlan.power.flag.y);
 	domainManifest.bankPowerLabelId = bankPowerLabelId;
-	domainManifest.powerFlagPoint = { x: leftX, y: powerBusY };
+	domainManifest.powerFlagPoint = busPlan.power.flag;
 	created.componentIds.push(bankPowerLabelId);
 	domainManifest.powerLabelIds.push(bankPowerLabelId);
-	const powerBus = [leftX, powerBusY, rightX, powerBusY];
-
-	const groundPoints = placedCaps.map(placed => ({
-		x: placed.groundPin.getState_X(),
-		y: placed.groundPin.getState_Y(),
-	}));
-	const groundPlan = buildGroundBusPlan(groundPoints);
-	domainManifest.groundFlagId = await createGroundFlag(groundPlan.flag.x, groundPlan.flag.y);
-	domainManifest.groundFlagPoint = groundPlan.flag;
+	domainManifest.groundFlagId = await createGroundFlag(busPlan.ground.flag.x, busPlan.ground.flag.y);
+	domainManifest.groundFlagPoint = busPlan.ground.flag;
 	created.componentIds.push(domainManifest.groundFlagId);
-	domainManifest.wireIds = await createConnectedBankWires(powerBus, groundPlan, created);
+	domainManifest.wireIds = await createConnectedBankWires(busPlan.power, busPlan.ground, created);
 
 	for (const placed of placedCaps) {
 		domainManifest.caps.push({
@@ -1006,6 +1002,18 @@ async function deletePrimitiveSet(set = emptyPrimitiveSet()) {
 	}
 }
 
+async function moveComponentTo(componentId, point) {
+	if (!componentId || !point)
+		return;
+	const [component] = await globalThis.eda.sch_PrimitiveComponent.get([componentId]);
+	if (!component)
+		return;
+	await globalThis.eda.sch_PrimitiveComponent.modify(componentId, {
+		x: point.x,
+		y: point.y,
+	});
+}
+
 async function removeCap(batchId, domainId, capId) {
 	const batch = state.manifests.find(item => item.id === batchId);
 	const domain = batch?.domains.find(item => item.id === domainId);
@@ -1038,30 +1046,16 @@ async function removeCap(batchId, domainId, capId) {
 	}
 
 	const created = { componentIds: [], wireIds: [] };
-	const rightPowerX = Math.max(...domain.caps.map(item => item.powerPoint.x));
-	const rightGroundX = Math.max(...domain.caps.map(item => item.groundPoint.x));
-	const powerBus = [
-		domain.powerFlagPoint.x,
-		domain.powerFlagPoint.y,
-		rightPowerX,
-		domain.powerFlagPoint.y,
-	];
-	const groundBus = [
-		domain.groundFlagPoint.x,
-		domain.groundFlagPoint.y,
-		rightGroundX,
-		domain.groundFlagPoint.y,
-	];
-	const groundDrops = domain.caps.map(item => [
-		item.groundPoint.x,
-		item.groundPoint.y,
-		item.groundPoint.x,
-		domain.groundFlagPoint.y,
-	]);
-	domain.wireIds = await createConnectedBankWires(powerBus, {
-		bus: groundBus,
-		drops: groundDrops,
-	}, created);
+	const busPlan = buildSharedBusPlan(domain.caps.map(item => ({
+		groundY: item.groundPoint.y,
+		powerY: item.powerPoint.y,
+		x: item.powerPoint.x,
+	})));
+	await moveComponentTo(domain.bankPowerLabelId, busPlan.power.flag);
+	await moveComponentTo(domain.groundFlagId, busPlan.ground.flag);
+	domain.powerFlagPoint = busPlan.power.flag;
+	domain.groundFlagPoint = busPlan.ground.flag;
+	domain.wireIds = await createConnectedBankWires(busPlan.power, busPlan.ground, created);
 	await saveManifests();
 	renderHistory();
 }
