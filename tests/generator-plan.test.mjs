@@ -4,10 +4,10 @@ import test from 'node:test';
 
 import {
 	buildBankPlan,
-	buildDomainRowOrigins,
 	buildInitialDomains,
 	buildSharedBusPlan,
 	extractDeviceCapacitance,
+	getExtraPlacementAnchorIds,
 	isDrawableWireLine,
 	isGroundPinName,
 	isPowerCandidate,
@@ -106,6 +106,14 @@ test('accepts only the selected native library device as a placement anchor', ()
 	assert.equal(matchesLibraryDevice(matching, device), true);
 	assert.equal(matchesLibraryDevice(other, device), false);
 	assert.equal(matchesLibraryDevice({}, device), false);
+});
+
+test('keeps one settled anchor and marks repeated mouse placements for cleanup', () => {
+	const components = ['C97', 'C98', 'C99'].map(id => ({
+		getState_PrimitiveId: () => id,
+	}));
+
+	assert.deepEqual(getExtraPlacementAnchorIds(components, 'C97'), ['C98', 'C99']);
 });
 
 test('orders bulk capacitors before per-pin capacitors in a connected bank', () => {
@@ -273,17 +281,6 @@ test('skips zero-length buses for a one-capacitor power domain', () => {
 	assert.deepEqual(plan.power.drops, []);
 	assert.deepEqual(plan.ground.drops, []);
 	assert.equal(isDrawableWireLine([10, 20, 40, 20]), true);
-});
-
-test('lays every selected power network on its own row from one anchor', () => {
-	const domains = [{ label: 'VDD' }, { label: 'VDDA' }, { label: 'VCORE' }];
-	const rows = buildDomainRowOrigins(domains, 500, 300);
-
-	assert.deepEqual(rows.map(row => [row.domain.label, row.x, row.y]), [
-		['VDD', 500, 300],
-		['VDDA', 500, 170],
-		['VCORE', 500, 40],
-	]);
 });
 
 test('validates empty labels and unassigned domains', () => {

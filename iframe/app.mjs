@@ -449,8 +449,8 @@ function renderPlanSummary() {
 	document.querySelector('#componentBadge').innerHTML = `<strong>${escapeHtml(state.input?.selected?.designator || '芯片')}</strong><span>${summary.domains} 个电源域 · ${summary.labels} 个电源脚</span>`;
 	document.querySelector('#placementSummary').textContent = `本次 ${totalCaps} 颗`;
 	document.querySelector('#placeAllButton').textContent = summary.domains > 0
-		? `追加 ${summary.domains} 个电源域`
-		: '追加放置';
+		? `逐组放置 ${summary.domains} 个电源域`
+		: '逐组放置';
 }
 
 function renderAll() {
@@ -810,14 +810,6 @@ export function buildSharedBusPlan(points) {
 	};
 }
 
-export function buildDomainRowOrigins(domains, anchorX, anchorY, rowPitch = 130) {
-	return (domains ?? []).map((domain, index) => ({
-		domain,
-		x: anchorX,
-		y: anchorY - index * rowPitch,
-	}));
-}
-
 async function createWire(line, net, created) {
 	const wire = await globalThis.eda.sch_PrimitiveWire.create(line, net);
 	if (!wire)
@@ -954,7 +946,7 @@ async function generateDomainBank(domain, preparedAnchor, anchorX, anchorY, crea
 	await createConnectedBankWires(busPlan.power, busPlan.ground, created);
 }
 
-async function finalizeAllDomainsPlacement(domains, anchorComponent) {
+async function finalizeDomainPlacement(domain, anchorComponent) {
 	const created = {
 		componentIds: [primitiveIdOf(anchorComponent)],
 		wireBaseline: null,
@@ -966,31 +958,17 @@ async function finalizeAllDomainsPlacement(domains, anchorComponent) {
 		await clearFollowMouseTip();
 		const anchorX = anchorComponent.getState_X();
 		const anchorY = anchorComponent.getState_Y();
-		const rows = buildDomainRowOrigins(domains, anchorX, anchorY);
-		const totals = [];
-		for (const [index, row] of rows.entries()) {
-			const { domain } = row;
-			const caps = buildBankPlan(domain);
-			const preparedAnchor = index === 0
-				? await prepareCapacitor(anchorComponent, caps[0])
-				: await createCapacitorAt(caps[0], row.x, row.y, created);
-			await generateDomainBank(domain, preparedAnchor, row.x, row.y, created);
-			totals.push(caps.length);
-		}
-		const totalCaps = totals.reduce((sum, count) => sum + count, 0);
-		setSuccess(`已追加 ${domains.length} 个电源网络、${totalCaps} 个电容。`);
+		const caps = buildBankPlan(domain);
+		const preparedAnchor = await prepareCapacitor(anchorComponent, caps[0]);
+		await generateDomainBank(domain, preparedAnchor, anchorX, anchorY, created);
+		return caps.length;
 	}
 	catch (error) {
 		const rollbackFailures = await rollback(created);
 		const rollbackMessage = rollbackFailures.length
 			? ` 回滚仍有 ${rollbackFailures.length} 项失败，请检查本次新增图元。`
 			: ' 本次新增图元已回滚。';
-		setError(`${error instanceof Error ? error.message : String(error)}${rollbackMessage}`);
-	}
-	finally {
-		state.placementPending = false;
-		await clearFollowMouseTip();
-		await restoreGeneratorWindow();
+		throw new Error(`${error instanceof Error ? error.message : String(error)}${rollbackMessage}`);
 	}
 }
 
@@ -1040,9 +1018,28 @@ async function waitForPlacedComponent(ignoredIds, device, timeoutMs = 120000) {
 			if (placed)
 				return placed;
 		}
-		await sleep(100);
+		await sleep(20);
 	}
 	throw new Error('等待鼠标落位超时，请重新点击放置。');
+}
+
+export function getExtraPlacementAnchorIds(components, anchorId) {
+	return (components ?? [])
+		.map(primitiveIdOf)
+		.filter(id => id !== anchorId);
+}
+
+async function removeExtraPlacementAnchors(components, anchorId) {
+	const extraIds = getExtraPlacementAnchorIds(components, anchorId);
+	for (const id of extraIds) {
+		const deleted = await globalThis.eda.sch_PrimitiveComponent.delete([id]);
+		if (deleted === false) {
+			const stillExists = (await globalThis.eda.sch_PrimitiveComponent.getAllPrimitiveId()).includes(id);
+			if (stillExists)
+				throw new Error(`清理重复锚点 ${id} 失败。`);
+		}
+	}
+	return extraIds.length;
 }
 
 async function finishMousePlacementTool() {
@@ -1085,7 +1082,7 @@ function exposeLegacyWindowEvent(event) {
 	};
 }
 
-async function placeAllDomainsWithMouse(mouseEvent) {
+async function placeDomainsSequentiallyWithMouse(mouseEvent) {
 	setError('');
 	setSuccess('');
 	const domains = state.domains.filter(domain => domain.pinNumbers.length > 0);
@@ -1101,88 +1098,120 @@ async function placeAllDomainsWithMouse(mouseEvent) {
 		return;
 	}
 	if (state.placementPending) {
-		setError('当前整批网络正在等待鼠标落位。');
+		setError('当前正在逐组等待鼠标落位。');
 		return;
 	}
 
 	const EDA = globalThis.eda;
-	const firstCap = buildBankPlan(domains[0])[0];
-	const anchorDevice = deviceForCap(firstCap);
-	const beforeIds = new Set(state.primitiveIdsSnapshot);
 	state.placementPending = true;
 	const restoreWindowEvent = exposeLegacyWindowEvent(mouseEvent);
-	const cleanupComponentIds = new Set();
-	let finalizationStarted = false;
-	let placementToolStarted = false;
+	let completedDomains = 0;
+	let completedCaps = 0;
+	let windowHidden = false;
 
 	try {
-		placementToolStarted = true;
-		const attachPromise = EDA.sch_PrimitiveComponent.placeComponentWithMouse({
-			libraryUuid: anchorDevice.libraryUuid,
-			uuid: anchorDevice.uuid,
-		});
-		await EDA.sys_Message.showFollowMouseTip(`点击画布放置 ${domains.length} 个电源网络的去耦组。`);
-		await EDA.sys_IFrame.hideIFrame(IFRAME_ID);
-		const attached = await attachPromise;
-		if (!attached)
-			throw new Error('电容器件未能绑定到鼠标。');
-		const attachedId = attached?.getState_PrimitiveId?.();
-		if (attachedId && matchesLibraryDevice(attached, anchorDevice))
-			cleanupComponentIds.add(attachedId);
-		await sleep(50);
-		const attachedIds = await EDA.sch_PrimitiveComponent.getAllPrimitiveId();
-		const ignoredIds = new Set([...beforeIds, ...attachedIds]);
-		const placedComponent = await waitForPlacedComponent(ignoredIds, anchorDevice);
-		const placedId = primitiveIdOf(placedComponent);
-		cleanupComponentIds.add(placedId);
-		const placedPoint = componentPoint(placedComponent);
-		await finishMousePlacementTool();
-		const settledIds = (await EDA.sch_PrimitiveComponent.getAllPrimitiveId()).filter(id => !beforeIds.has(id));
-		const settledComponents = settledIds.length
-			? await EDA.sch_PrimitiveComponent.get(settledIds)
-			: [];
-		const matchingSettledComponents = settledComponents.filter((component) => {
-			return matchesLibraryDevice(component, anchorDevice);
-		});
-		const likelyAnchors = matchingSettledComponents.filter((component) => {
-			const id = primitiveIdOf(component);
-			return id === placedId || !attachedIds.includes(id);
-		});
-		const settledAnchor = selectClosestPlacedComponent(
-			likelyAnchors.length ? likelyAnchors : matchingSettledComponents,
-			placedPoint,
-		);
-		if (!settledAnchor)
-			throw new Error('放置工具结束后未找到已落下的锚点电容。');
-		cleanupComponentIds.add(primitiveIdOf(settledAnchor));
-		finalizationStarted = true;
-		await finalizeAllDomainsPlacement(domains, settledAnchor);
-	}
-	catch (error) {
-		state.placementPending = false;
-		let rollbackFailures = [];
-		if (placementToolStarted && !finalizationStarted) {
+		for (const [index, domain] of domains.entries()) {
+			const beforeIds = new Set(state.primitiveIdsSnapshot);
+			const anchorDevice = deviceForCap(buildBankPlan(domain)[0]);
+			const cleanupComponentIds = new Set();
+			let finalizationStarted = false;
+			let placementToolStarted = false;
+
 			try {
+				placementToolStarted = true;
+				const attachPromise = EDA.sch_PrimitiveComponent.placeComponentWithMouse({
+					libraryUuid: anchorDevice.libraryUuid,
+					uuid: anchorDevice.uuid,
+				});
+				const attached = await attachPromise;
+				if (!attached)
+					throw new Error('电容器件未能绑定到鼠标。');
+				const attachedId = attached?.getState_PrimitiveId?.();
+				if (attachedId && matchesLibraryDevice(attached, anchorDevice))
+					cleanupComponentIds.add(attachedId);
+				const attachedIds = await EDA.sch_PrimitiveComponent.getAllPrimitiveId();
+				const earlyIds = attachedIds.filter(id => !beforeIds.has(id));
+				const earlyComponents = earlyIds.length
+					? await EDA.sch_PrimitiveComponent.get(earlyIds)
+					: [];
+				const earlyMatchingComponents = earlyComponents.filter((component) => {
+					return matchesLibraryDevice(component, anchorDevice);
+				});
+				await EDA.sys_Message.showFollowMouseTip(`第 ${index + 1}/${domains.length} 组：点击放置 ${domain.label}`);
+				if (!windowHidden) {
+					await EDA.sys_IFrame.hideIFrame(IFRAME_ID);
+					windowHidden = true;
+				}
+				const ignoredIds = new Set([...beforeIds, ...attachedIds]);
+				const earlyMousePoint = earlyMatchingComponents.length > 1
+					? await EDA.sch_SelectControl.getCurrentMousePosition()
+					: undefined;
+				const placedComponent = earlyMatchingComponents.length > 1
+					? (selectClosestPlacedComponent(earlyMatchingComponents, earlyMousePoint) ?? earlyMatchingComponents[0])
+					: await waitForPlacedComponent(ignoredIds, anchorDevice);
+				const placedId = primitiveIdOf(placedComponent);
+				cleanupComponentIds.add(placedId);
+				const placedPoint = componentPoint(placedComponent);
 				await finishMousePlacementTool();
+				const settledIds = (await EDA.sch_PrimitiveComponent.getAllPrimitiveId()).filter(id => !beforeIds.has(id));
+				const settledComponents = settledIds.length
+					? await EDA.sch_PrimitiveComponent.get(settledIds)
+					: [];
+				const matchingSettledComponents = settledComponents.filter((component) => {
+					return matchesLibraryDevice(component, anchorDevice);
+				});
+				for (const component of matchingSettledComponents)
+					cleanupComponentIds.add(primitiveIdOf(component));
+				const likelyAnchors = matchingSettledComponents.filter((component) => {
+					const id = primitiveIdOf(component);
+					return id === placedId || !attachedIds.includes(id);
+				});
+				const settledAnchor = selectClosestPlacedComponent(
+					likelyAnchors.length ? likelyAnchors : matchingSettledComponents,
+					placedPoint,
+				);
+				if (!settledAnchor)
+					throw new Error('放置工具结束后未找到已落下的锚点电容。');
+				const settledAnchorId = primitiveIdOf(settledAnchor);
+				await removeExtraPlacementAnchors(matchingSettledComponents, settledAnchorId);
+				finalizationStarted = true;
+				completedCaps += await finalizeDomainPlacement(domain, settledAnchor);
+				completedDomains += 1;
+				await refreshPrimitiveIdsSnapshot();
 			}
-			catch {
-				// Continue with cleanup of any component already committed by the tool.
-			}
-			try {
-				rollbackFailures = await rollback({ componentIds: [...cleanupComponentIds], wireIds: [] });
-			}
-			catch (cleanupError) {
-				rollbackFailures.push(cleanupError instanceof Error ? cleanupError.message : String(cleanupError));
+			catch (error) {
+				let rollbackFailures = [];
+				if (placementToolStarted && !finalizationStarted) {
+					try {
+						await finishMousePlacementTool();
+					}
+					catch {
+						// Continue with cleanup of any component already committed by the tool.
+					}
+					try {
+						rollbackFailures = await rollback({ componentIds: [...cleanupComponentIds], wireIds: [] });
+					}
+					catch (cleanupError) {
+						rollbackFailures.push(cleanupError instanceof Error ? cleanupError.message : String(cleanupError));
+					}
+				}
+				const cleanupMessage = rollbackFailures.length
+					? ` 锚点清理仍有 ${rollbackFailures.length} 项失败，请检查画布。`
+					: '';
+				throw new Error(`${error instanceof Error ? error.message : String(error)}${cleanupMessage}`);
 			}
 		}
-		await clearFollowMouseTip();
-		await restoreGeneratorWindow();
-		const cleanupMessage = rollbackFailures.length
-			? ` 锚点清理仍有 ${rollbackFailures.length} 项失败，请检查画布。`
-			: '';
-		setError(`${error instanceof Error ? error.message : String(error)}${cleanupMessage}`);
+		setSuccess(`已逐组追加 ${completedDomains} 个电源网络、${completedCaps} 个电容。`);
+	}
+	catch (error) {
+		const progress = completedDomains > 0 ? `已完成 ${completedDomains}/${domains.length} 组。` : '';
+		setError(`${progress}${error instanceof Error ? error.message : String(error)}`);
 	}
 	finally {
+		state.placementPending = false;
+		await clearFollowMouseTip();
+		if (windowHidden)
+			await restoreGeneratorWindow();
 		restoreWindowEvent();
 		await refreshPrimitiveIdsSnapshot();
 	}
@@ -1253,7 +1282,7 @@ async function init() {
 			});
 		});
 		document.querySelector('#placeAllButton').addEventListener('click', (event) => {
-			void placeAllDomainsWithMouse(event);
+			void placeDomainsSequentiallyWithMouse(event);
 		});
 		renderSelectedDevices();
 		renderAll();

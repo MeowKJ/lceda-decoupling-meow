@@ -25,9 +25,10 @@ test('invokes mouse placement before asynchronous UI work', async () => {
 	assert.match(bundle, /capacitorDevices\.v2/);
 	assert.match(bundle, /capacitorValues\.v1/);
 	assert.match(bundle, /selectClosestPlacedComponent/);
+	assert.match(bundle, /removeExtraPlacementAnchors/);
 	assert.match(bundle, /extractDeviceCapacitance/);
 	assert.match(bundle, /mapConcurrent/);
-	assert.match(bundle, /placeAllDomainsWithMouse/);
+	assert.match(bundle, /placeDomainsSequentiallyWithMouse/);
 	assert.match(bundle, /totalCaps/);
 	assert.match(bundle, /buildSharedBusPlan/);
 	assert.match(bundle, /sch_PrimitiveAttribute\.getAll/);
@@ -49,4 +50,7 @@ test('invokes mouse placement before asynchronous UI work', async () => {
 	assert.doesNotMatch(source, /createPowerFlag\(domain\.label, pin\.x, pin\.y\)/);
 	assert.doesNotMatch(source, /MANIFESTS_STORAGE_KEY|state\.manifests|替换现有去耦/);
 	assert.match(source, /本次 \$\{totalCaps\} 颗/);
+	assert.match(source, /逐组放置 \$\{summary\.domains\} 个电源域/);
+	assert.match(source, /第 \$\{index \+ 1\}\/\$\{domains\.length\} 组/);
+	assert.match(source, /await sleep\(20\)/);
 });
