@@ -2,7 +2,6 @@ const INPUT_STORAGE_KEY = 'decouplingMeow.generatorInput.v1';
 const DEVICES_STORAGE_KEY = 'decouplingMeow.capacitorDevices.v2';
 const CAP_VALUES_STORAGE_KEY = 'decouplingMeow.capacitorValues.v1';
 const LEGACY_DEVICE_STORAGE_KEY = 'decouplingMeow.capacitorDevice.v1';
-const MANIFESTS_STORAGE_KEY = 'decouplingMeow.manifests.v1';
 const IFRAME_ID = 'lceda-decoupling-meow-window';
 const DEFAULT_CAP_VALUES = Object.freeze({ bulk: '4.7uF', pin: '100nF' });
 
@@ -30,7 +29,6 @@ const state = {
 	},
 	domains: [],
 	input: null,
-	manifests: [],
 	onlyCandidates: true,
 	placementPending: false,
 	primitiveIdsSnapshot: new Set(),
@@ -448,16 +446,11 @@ function countPlan() {
 function renderPlanSummary() {
 	const summary = countPlan();
 	const totalCaps = summary.bulkCaps + summary.pinCaps;
-	const existingBatches = getRelevantManifests().length;
 	document.querySelector('#componentBadge').innerHTML = `<strong>${escapeHtml(state.input?.selected?.designator || '芯片')}</strong><span>${summary.domains} 个电源域 · ${summary.labels} 个电源脚</span>`;
-	document.querySelector('#placementSummary').textContent = existingBatches > 0
-		? `${totalCaps} 颗电容 · 替换旧结果`
-		: `${totalCaps} 颗电容`;
-	document.querySelector('#placeAllButton').textContent = existingBatches > 0
-		? '替换现有去耦'
-		: summary.domains > 0
-			? `放置 ${summary.domains} 个电源域`
-			: '放置';
+	document.querySelector('#placementSummary').textContent = `本次 ${totalCaps} 颗`;
+	document.querySelector('#placeAllButton').textContent = summary.domains > 0
+		? `追加 ${summary.domains} 个电源域`
+		: '追加放置';
 }
 
 function renderAll() {
@@ -664,10 +657,6 @@ async function setCapacitorValue(component, value) {
 	return await asyncComponent.done();
 }
 
-export function shouldShiftCapacitorAttribute(key) {
-	return ['DESIGNATOR', 'NAME', 'VALUE'].includes(String(key ?? '').trim().toUpperCase());
-}
-
 export function selectCapacitorTextAttributes(attributes, intendedValue) {
 	const visible = (attributes ?? []).filter((attribute) => {
 		return Number.isFinite(attribute.getState_X?.())
@@ -695,7 +684,7 @@ export function selectCapacitorTextAttributes(attributes, intendedValue) {
 export async function shiftCapacitorTextLeft(componentId, intendedValue, gridSize = 10) {
 	const attributes = await globalThis.eda.sch_PrimitiveAttribute.getAll(componentId);
 	const selected = selectCapacitorTextAttributes(attributes, intendedValue);
-	for (const attribute of selected) {
+	await Promise.all(selected.map(async (attribute) => {
 		const x = attribute.getState_X();
 		const primitiveId = attribute.getState_PrimitiveId();
 		const targetX = x - gridSize;
@@ -709,8 +698,32 @@ export async function shiftCapacitorTextLeft(componentId, intendedValue, gridSiz
 		}
 		if (!Number.isFinite(afterX) || Math.abs(afterX - targetX) > 0.001)
 			throw new Error(`电容文字 ${attribute.getState_Key()} 未移动到目标位置。`);
-	}
+	}));
 	return selected.length;
+}
+
+export async function mapConcurrent(items, limit, worker) {
+	const values = [...(items ?? [])];
+	const results = Array.from({ length: values.length });
+	let nextIndex = 0;
+	let firstError;
+	const runWorker = async () => {
+		while (!firstError && nextIndex < values.length) {
+			const index = nextIndex;
+			nextIndex += 1;
+			try {
+				results[index] = await worker(values[index], index);
+			}
+			catch (error) {
+				firstError ??= error;
+			}
+		}
+	};
+	const workerCount = Math.min(Math.max(1, Number(limit) || 1), values.length);
+	await Promise.all(Array.from({ length: workerCount }, runWorker));
+	if (firstError)
+		throw firstError;
+	return results;
 }
 
 async function createCapacitorAt(cap, x, y, created) {
@@ -765,43 +778,34 @@ export function orderVerticalPinsByRole(pins) {
 	};
 }
 
-export function buildGroundBusPlan(points, clearance = 20) {
-	if (!points?.length)
-		throw new Error('接地母线至少需要一个连接点。');
-	const busY = Math.min(...points.map(point => point.y)) - clearance;
-	const flagX = Math.min(...points.map(point => point.x)) - clearance;
-	const rightX = Math.max(...points.map(point => point.x));
-	return {
-		bus: [flagX, busY, rightX, busY],
-		drops: points.map(point => [point.x, point.y, point.x, busY]),
-		flag: { x: flagX, y: busY },
-	};
-}
-
-export function buildSharedBusPlan(points, sideMargin = 20) {
+export function buildSharedBusPlan(points) {
 	if (!points?.length)
 		throw new Error('母线至少需要一个电容连接点。');
 	const longest = [...points].sort((a, b) => {
 		return (b.powerY - b.groundY) - (a.powerY - a.groundY);
 	})[0];
-	const flagX = Math.min(...points.map(point => point.x)) - sideMargin;
-	const rightX = Math.max(...points.map(point => point.x));
+	const powerX = point => point.powerX ?? point.x;
+	const groundX = point => point.groundX ?? point.x;
+	const firstPowerX = powerX(points[0]);
+	const firstGroundX = groundX(points[0]);
+	const rightPowerX = Math.max(...points.map(powerX));
+	const rightGroundX = Math.max(...points.map(groundX));
 	const powerY = longest.powerY;
 	const groundY = longest.groundY;
 	return {
 		ground: {
-			bus: [flagX, groundY, rightX, groundY],
+			bus: [firstGroundX, groundY, rightGroundX, groundY],
 			drops: points
 				.filter(point => Math.abs(point.groundY - groundY) > 0.001)
-				.map(point => [point.x, point.groundY, point.x, groundY]),
-			flag: { x: flagX, y: groundY },
+				.map(point => [groundX(point), point.groundY, groundX(point), groundY]),
+			flag: { x: firstGroundX, y: groundY },
 		},
 		power: {
-			bus: [flagX, powerY, rightX, powerY],
+			bus: [firstPowerX, powerY, rightPowerX, powerY],
 			drops: points
 				.filter(point => Math.abs(point.powerY - powerY) > 0.001)
-				.map(point => [point.x, point.powerY, point.x, powerY]),
-			flag: { x: flagX, y: powerY },
+				.map(point => [powerX(point), point.powerY, powerX(point), powerY]),
+			flag: { x: firstPowerX, y: powerY },
 		},
 	};
 }
@@ -823,41 +827,78 @@ async function createWire(line, net, created) {
 	return id;
 }
 
+export function isDrawableWireLine(line) {
+	return Array.isArray(line)
+		&& line.length >= 4
+		&& (Math.abs(Number(line[0]) - Number(line[2])) > 0.001
+			|| Math.abs(Number(line[1]) - Number(line[3])) > 0.001);
+}
+
 async function createConnectedBankWires(powerPlan, groundPlan, created) {
-	const beforeIds = new Set(await globalThis.eda.sch_PrimitiveWire.getAllPrimitiveId());
-	await createWire(powerPlan.bus ?? powerPlan, undefined, created);
-	for (const drop of powerPlan.drops ?? [])
-		await createWire(drop, undefined, created);
-	await createWire(groundPlan.bus, undefined, created);
-	for (const drop of groundPlan.drops)
-		await createWire(drop, undefined, created);
-	const stableIds = (await globalThis.eda.sch_PrimitiveWire.getAllPrimitiveId())
-		.filter(id => !beforeIds.has(id));
-	created.wireIds.push(...stableIds);
-	return stableIds;
+	const ids = [];
+	const powerBus = powerPlan.bus ?? powerPlan;
+	if (isDrawableWireLine(powerBus))
+		ids.push(await createWire(powerBus, undefined, created));
+	if (isDrawableWireLine(groundPlan.bus))
+		ids.push(await createWire(groundPlan.bus, undefined, created));
+	for (const drop of powerPlan.drops ?? []) {
+		if (isDrawableWireLine(drop))
+			ids.push(await createWire(drop, undefined, created));
+	}
+	for (const drop of groundPlan.drops ?? []) {
+		if (isDrawableWireLine(drop))
+			ids.push(await createWire(drop, undefined, created));
+	}
+	return ids;
 }
 
 async function rollback(created) {
-	for (const id of [...new Set(created.wireIds)].reverse()) {
-		try {
-			await globalThis.eda.sch_PrimitiveWire.delete([id]);
+	const rollbackFailures = [];
+	const deleteCurrentWires = async (extraIds = []) => {
+		const currentIds = new Set(await globalThis.eda.sch_PrimitiveWire.getAllPrimitiveId());
+		const stableNewIds = created.wireBaseline
+			? [...currentIds].filter(id => !created.wireBaseline.has(id))
+			: [];
+		for (const id of [...new Set([...extraIds, ...stableNewIds])].reverse()) {
+			if (!currentIds.has(id))
+				continue;
+			try {
+				const deleted = await globalThis.eda.sch_PrimitiveWire.delete([id]);
+				if (deleted === false) {
+					const stillExists = (await globalThis.eda.sch_PrimitiveWire.getAllPrimitiveId()).includes(id);
+					if (stillExists)
+						rollbackFailures.push(`导线 ${id}`);
+				}
+			}
+			catch (error) {
+				rollbackFailures.push(error instanceof Error ? error.message : String(error));
+			}
 		}
-		catch {
-			// Merged intermediate wire IDs may already be stale.
+	};
+	if (created.wireBaseline || created.wireIds.length) {
+		try {
+			await deleteCurrentWires(created.wireIds);
+			if (created.wireBaseline)
+				await deleteCurrentWires();
+		}
+		catch (error) {
+			rollbackFailures.push(error instanceof Error ? error.message : String(error));
 		}
 	}
 	for (const id of [...new Set(created.componentIds)].reverse()) {
 		try {
-			await globalThis.eda.sch_PrimitiveComponent.delete([id]);
+			const deleted = await globalThis.eda.sch_PrimitiveComponent.delete([id]);
+			if (deleted === false) {
+				const stillExists = (await globalThis.eda.sch_PrimitiveComponent.getAllPrimitiveId()).includes(id);
+				if (stillExists)
+					rollbackFailures.push(`图元 ${id}`);
+			}
 		}
-		catch {
-			// Keep the original placement error.
+		catch (error) {
+			rollbackFailures.push(error instanceof Error ? error.message : String(error));
 		}
 	}
-}
-
-async function saveManifests() {
-	await globalThis.eda.sys_Storage.setExtensionUserConfig(MANIFESTS_STORAGE_KEY, state.manifests);
+	return rollbackFailures;
 }
 
 async function refreshPrimitiveIdsSnapshot() {
@@ -896,107 +937,55 @@ function domainPlacementErrors(domain) {
 
 async function generateDomainBank(domain, preparedAnchor, anchorX, anchorY, created) {
 	const caps = buildBankPlan(domain);
-	const placedCaps = [preparedAnchor];
-	for (const [index, cap] of caps.slice(1).entries()) {
-		placedCaps.push(await createCapacitorAt(cap, anchorX + (index + 1) * 40, anchorY, created));
-	}
-
-	const domainManifest = {
-		bankPowerLabelId: '',
-		caps: [],
-		groundFlagPoint: null,
-		id: domain.id,
-		label: domain.label,
-		groundFlagId: '',
-		powerFlagPoint: null,
-		powerLabelIds: [],
-		wireIds: [],
-	};
+	const remaining = await mapConcurrent(caps.slice(1), 3, (cap, index) => {
+		return createCapacitorAt(cap, anchorX + (index + 1) * 40, anchorY, created);
+	});
+	const placedCaps = [preparedAnchor, ...remaining];
 	const busPlan = buildSharedBusPlan(placedCaps.map(placed => ({
+		groundX: placed.groundPin.getState_X(),
 		groundY: placed.groundPin.getState_Y(),
+		powerX: placed.powerPin.getState_X(),
 		powerY: placed.powerPin.getState_Y(),
-		x: placed.powerPin.getState_X(),
 	})));
-	const bankPowerLabelId = await createPowerFlag(domain.label, busPlan.power.flag.x, busPlan.power.flag.y);
-	domainManifest.bankPowerLabelId = bankPowerLabelId;
-	domainManifest.powerFlagPoint = busPlan.power.flag;
-	created.componentIds.push(bankPowerLabelId);
-	domainManifest.powerLabelIds.push(bankPowerLabelId);
-	domainManifest.groundFlagId = await createGroundFlag(busPlan.ground.flag.x, busPlan.ground.flag.y);
-	domainManifest.groundFlagPoint = busPlan.ground.flag;
-	created.componentIds.push(domainManifest.groundFlagId);
-	domainManifest.wireIds = await createConnectedBankWires(busPlan.power, busPlan.ground, created);
-
-	for (const placed of placedCaps) {
-		domainManifest.caps.push({
-			componentId: placed.componentId,
-			groundPoint: {
-				x: placed.groundPin.getState_X(),
-				y: placed.groundPin.getState_Y(),
-			},
-			id: placed.cap.id,
-			kind: placed.cap.kind,
-			pinNumber: placed.cap.pinNumber ?? '',
-			powerPoint: {
-				x: placed.powerPin.getState_X(),
-				y: placed.powerPin.getState_Y(),
-			},
-			value: placed.cap.value,
-		});
-	}
-	return domainManifest;
+	const powerFlagId = await createPowerFlag(domain.label, busPlan.power.flag.x, busPlan.power.flag.y);
+	created.componentIds.push(powerFlagId);
+	const groundFlagId = await createGroundFlag(busPlan.ground.flag.x, busPlan.ground.flag.y);
+	created.componentIds.push(groundFlagId);
+	await createConnectedBankWires(busPlan.power, busPlan.ground, created);
 }
 
 async function finalizeAllDomainsPlacement(domains, anchorComponent) {
-	const created = { componentIds: [primitiveIdOf(anchorComponent)], wireIds: [] };
-	const batch = {
-		chipDesignator: state.input.selected.designator,
-		chipPrimitiveId: state.input.selected.primitiveId,
-		createdAt: new Date().toISOString(),
-		documentUuid: state.input.document.uuid,
-		domains: [],
-		id: nextId('batch'),
-		textLayoutVersion: 1,
+	const created = {
+		componentIds: [primitiveIdOf(anchorComponent)],
+		wireBaseline: null,
+		wireIds: [],
 	};
 
 	try {
+		created.wireBaseline = new Set(await globalThis.eda.sch_PrimitiveWire.getAllPrimitiveId());
 		await clearFollowMouseTip();
 		const anchorX = anchorComponent.getState_X();
 		const anchorY = anchorComponent.getState_Y();
-		let totalCaps = 0;
 		const rows = buildDomainRowOrigins(domains, anchorX, anchorY);
+		const totals = [];
 		for (const [index, row] of rows.entries()) {
 			const { domain } = row;
 			const caps = buildBankPlan(domain);
 			const preparedAnchor = index === 0
 				? await prepareCapacitor(anchorComponent, caps[0])
 				: await createCapacitorAt(caps[0], row.x, row.y, created);
-			batch.domains.push(await generateDomainBank(domain, preparedAnchor, row.x, row.y, created));
-			totalCaps += caps.length;
+			await generateDomainBank(domain, preparedAnchor, row.x, row.y, created);
+			totals.push(caps.length);
 		}
-		let replacedBatches = 0;
-		const replacementFailures = [];
-		for (const previousBatch of getRelevantManifests()) {
-			try {
-				await deletePrimitiveSet(primitivesForBatch(previousBatch));
-				state.manifests = state.manifests.filter(item => item.id !== previousBatch.id);
-				replacedBatches += 1;
-			}
-			catch (error) {
-				replacementFailures.push(error instanceof Error ? error.message : String(error));
-			}
-		}
-		state.manifests.unshift(batch);
-		await saveManifests();
-		setSuccess(`已生成 ${domains.length} 个电源网络、${totalCaps} 个电容${replacedBatches ? `，并替换 ${replacedBatches} 批旧结果` : ''}。`);
-		if (replacementFailures.length)
-			setError(`新结果已生成，但有 ${replacementFailures.length} 批旧结果未能完整删除，仍保留在生成记录中。`);
-		renderHistory();
-		renderPlanSummary();
+		const totalCaps = totals.reduce((sum, count) => sum + count, 0);
+		setSuccess(`已追加 ${domains.length} 个电源网络、${totalCaps} 个电容。`);
 	}
 	catch (error) {
-		await rollback(created);
-		setError(`${error instanceof Error ? error.message : String(error)} 本次放置已尝试回滚。`);
+		const rollbackFailures = await rollback(created);
+		const rollbackMessage = rollbackFailures.length
+			? ` 回滚仍有 ${rollbackFailures.length} 项失败，请检查本次新增图元。`
+			: ' 本次新增图元已回滚。';
+		setError(`${error instanceof Error ? error.message : String(error)}${rollbackMessage}`);
 	}
 	finally {
 		state.placementPending = false;
@@ -1032,16 +1021,24 @@ export function selectClosestPlacedComponent(components, point) {
 	return sorted[0]?.component;
 }
 
-async function waitForPlacedComponent(ignoredIds, timeoutMs = 120000) {
+export function matchesLibraryDevice(component, device) {
+	const linked = component?.getState_Component?.();
+	return Boolean(linked?.uuid && linked?.libraryUuid
+		&& linked.uuid === device?.uuid
+		&& linked.libraryUuid === device?.libraryUuid);
+}
+
+async function waitForPlacedComponent(ignoredIds, device, timeoutMs = 120000) {
 	const EDA = globalThis.eda;
 	const expiresAt = Date.now() + timeoutMs;
 	while (Date.now() < expiresAt) {
 		const ids = await EDA.sch_PrimitiveComponent.getAllPrimitiveId();
-		const placedId = ids.find(id => !ignoredIds.has(id));
-		if (placedId) {
-			const components = await EDA.sch_PrimitiveComponent.get([placedId]);
-			if (components[0])
-				return components[0];
+		const candidateIds = ids.filter(id => !ignoredIds.has(id));
+		if (candidateIds.length) {
+			const components = await EDA.sch_PrimitiveComponent.get(candidateIds);
+			const placed = components.find(component => matchesLibraryDevice(component, device));
+			if (placed)
+				return placed;
 		}
 		await sleep(100);
 	}
@@ -1114,8 +1111,12 @@ async function placeAllDomainsWithMouse(mouseEvent) {
 	const beforeIds = new Set(state.primitiveIdsSnapshot);
 	state.placementPending = true;
 	const restoreWindowEvent = exposeLegacyWindowEvent(mouseEvent);
+	const cleanupComponentIds = new Set();
+	let finalizationStarted = false;
+	let placementToolStarted = false;
 
 	try {
+		placementToolStarted = true;
 		const attachPromise = EDA.sch_PrimitiveComponent.placeComponentWithMouse({
 			libraryUuid: anchorDevice.libraryUuid,
 			uuid: anchorDevice.uuid,
@@ -1125,251 +1126,66 @@ async function placeAllDomainsWithMouse(mouseEvent) {
 		const attached = await attachPromise;
 		if (!attached)
 			throw new Error('电容器件未能绑定到鼠标。');
+		const attachedId = attached?.getState_PrimitiveId?.();
+		if (attachedId && matchesLibraryDevice(attached, anchorDevice))
+			cleanupComponentIds.add(attachedId);
 		await sleep(50);
 		const attachedIds = await EDA.sch_PrimitiveComponent.getAllPrimitiveId();
 		const ignoredIds = new Set([...beforeIds, ...attachedIds]);
-		const placedComponent = await waitForPlacedComponent(ignoredIds);
+		const placedComponent = await waitForPlacedComponent(ignoredIds, anchorDevice);
 		const placedId = primitiveIdOf(placedComponent);
+		cleanupComponentIds.add(placedId);
 		const placedPoint = componentPoint(placedComponent);
 		await finishMousePlacementTool();
 		const settledIds = (await EDA.sch_PrimitiveComponent.getAllPrimitiveId()).filter(id => !beforeIds.has(id));
 		const settledComponents = settledIds.length
 			? await EDA.sch_PrimitiveComponent.get(settledIds)
 			: [];
-		const likelyAnchors = settledComponents.filter((component) => {
+		const matchingSettledComponents = settledComponents.filter((component) => {
+			return matchesLibraryDevice(component, anchorDevice);
+		});
+		const likelyAnchors = matchingSettledComponents.filter((component) => {
 			const id = primitiveIdOf(component);
 			return id === placedId || !attachedIds.includes(id);
 		});
 		const settledAnchor = selectClosestPlacedComponent(
-			likelyAnchors.length ? likelyAnchors : settledComponents,
+			likelyAnchors.length ? likelyAnchors : matchingSettledComponents,
 			placedPoint,
 		);
 		if (!settledAnchor)
 			throw new Error('放置工具结束后未找到已落下的锚点电容。');
+		cleanupComponentIds.add(primitiveIdOf(settledAnchor));
+		finalizationStarted = true;
 		await finalizeAllDomainsPlacement(domains, settledAnchor);
 	}
 	catch (error) {
 		state.placementPending = false;
+		let rollbackFailures = [];
+		if (placementToolStarted && !finalizationStarted) {
+			try {
+				await finishMousePlacementTool();
+			}
+			catch {
+				// Continue with cleanup of any component already committed by the tool.
+			}
+			try {
+				rollbackFailures = await rollback({ componentIds: [...cleanupComponentIds], wireIds: [] });
+			}
+			catch (cleanupError) {
+				rollbackFailures.push(cleanupError instanceof Error ? cleanupError.message : String(cleanupError));
+			}
+		}
 		await clearFollowMouseTip();
 		await restoreGeneratorWindow();
-		setError(error instanceof Error ? error.message : String(error));
+		const cleanupMessage = rollbackFailures.length
+			? ` 锚点清理仍有 ${rollbackFailures.length} 项失败，请检查画布。`
+			: '';
+		setError(`${error instanceof Error ? error.message : String(error)}${cleanupMessage}`);
 	}
 	finally {
 		restoreWindowEvent();
 		await refreshPrimitiveIdsSnapshot();
 	}
-}
-
-function emptyPrimitiveSet() {
-	return { componentIds: [], wireIds: [] };
-}
-
-function mergePrimitiveSets(...sets) {
-	return {
-		componentIds: sets.flatMap(set => set.componentIds ?? []).filter(Boolean),
-		wireIds: sets.flatMap(set => set.wireIds ?? []).filter(Boolean),
-	};
-}
-
-function primitivesForCap(cap) {
-	return {
-		componentIds: [cap.componentId, cap.groundFlagId, ...(cap.flagIds ?? [])].filter(Boolean),
-		wireIds: [cap.groundWireId].filter(Boolean),
-	};
-}
-
-function primitivesForDomain(domain) {
-	return mergePrimitiveSets(
-		{ componentIds: [...(domain.powerLabelIds ?? []), domain.groundFlagId].filter(Boolean), wireIds: domain.wireIds ?? [] },
-		...(domain.caps ?? []).map(primitivesForCap),
-	);
-}
-
-function primitivesForBatch(batch) {
-	return mergePrimitiveSets(...(batch.domains ?? []).map(primitivesForDomain));
-}
-
-async function deletePrimitiveSet(set = emptyPrimitiveSet()) {
-	const wireIds = [...new Set(set.wireIds)].filter(Boolean);
-	const existingWireIds = new Set(await globalThis.eda.sch_PrimitiveWire.getAllPrimitiveId());
-	for (const id of wireIds) {
-		if (!existingWireIds.has(id))
-			continue;
-		const deleted = await globalThis.eda.sch_PrimitiveWire.delete([id]);
-		if (deleted === false)
-			throw new Error(`删除旧导线 ${id} 失败。`);
-	}
-
-	const componentIds = [...new Set(set.componentIds)].filter(Boolean);
-	const existingComponentIds = new Set(await globalThis.eda.sch_PrimitiveComponent.getAllPrimitiveId());
-	for (const id of componentIds) {
-		if (!existingComponentIds.has(id))
-			continue;
-		const deleted = await globalThis.eda.sch_PrimitiveComponent.delete([id]);
-		if (deleted === false)
-			throw new Error(`删除旧器件 ${id} 失败。`);
-	}
-}
-
-async function moveComponentTo(componentId, point) {
-	if (!componentId || !point)
-		return;
-	const [component] = await globalThis.eda.sch_PrimitiveComponent.get([componentId]);
-	if (!component)
-		return;
-	await globalThis.eda.sch_PrimitiveComponent.modify(componentId, {
-		x: point.x,
-		y: point.y,
-	});
-}
-
-async function removeCap(batchId, domainId, capId) {
-	const batch = state.manifests.find(item => item.id === batchId);
-	const domain = batch?.domains.find(item => item.id === domainId);
-	const cap = domain?.caps.find(item => item.id === capId);
-	if (!batch || !domain || !cap)
-		return;
-	const supportsSharedBusRebuild = cap.powerPoint && cap.groundPoint
-		&& domain.powerFlagPoint && domain.groundFlagPoint;
-	if (!supportsSharedBusRebuild) {
-		await deletePrimitiveSet(primitivesForCap(cap));
-		domain.caps = domain.caps.filter(item => item.id !== capId);
-		await saveManifests();
-		renderHistory();
-		renderPlanSummary();
-		return;
-	}
-
-	await deletePrimitiveSet({
-		componentIds: [cap.componentId],
-		wireIds: domain.wireIds ?? [],
-	});
-	domain.caps = domain.caps.filter(item => item.id !== capId);
-	if (!domain.caps.length) {
-		await deletePrimitiveSet(primitivesForDomain(domain));
-		batch.domains = batch.domains.filter(item => item.id !== domainId);
-		if (!batch.domains.length)
-			state.manifests = state.manifests.filter(item => item.id !== batchId);
-		await saveManifests();
-		renderHistory();
-		renderPlanSummary();
-		return;
-	}
-
-	const created = { componentIds: [], wireIds: [] };
-	const busPlan = buildSharedBusPlan(domain.caps.map(item => ({
-		groundY: item.groundPoint.y,
-		powerY: item.powerPoint.y,
-		x: item.powerPoint.x,
-	})));
-	await moveComponentTo(domain.bankPowerLabelId, busPlan.power.flag);
-	await moveComponentTo(domain.groundFlagId, busPlan.ground.flag);
-	domain.powerFlagPoint = busPlan.power.flag;
-	domain.groundFlagPoint = busPlan.ground.flag;
-	domain.wireIds = await createConnectedBankWires(busPlan.power, busPlan.ground, created);
-	await saveManifests();
-	renderHistory();
-	renderPlanSummary();
-}
-
-async function removeGeneratedDomain(batchId, domainId) {
-	const batch = state.manifests.find(item => item.id === batchId);
-	const domain = batch?.domains.find(item => item.id === domainId);
-	if (!batch || !domain)
-		return;
-	await deletePrimitiveSet(primitivesForDomain(domain));
-	batch.domains = batch.domains.filter(item => item.id !== domainId);
-	if (!batch.domains.length)
-		state.manifests = state.manifests.filter(item => item.id !== batchId);
-	await saveManifests();
-	renderHistory();
-	renderPlanSummary();
-}
-
-async function removeBatch(batchId) {
-	const batch = state.manifests.find(item => item.id === batchId);
-	if (!batch)
-		return;
-	await deletePrimitiveSet(primitivesForBatch(batch));
-	state.manifests = state.manifests.filter(item => item.id !== batchId);
-	await saveManifests();
-	renderHistory();
-	renderPlanSummary();
-}
-
-function renderHistoryCap(batch, domain, cap) {
-	const kind = cap.kind === 'bulk' ? '主电容' : `Pin ${escapeHtml(cap.pinNumber)} 去耦`;
-	return `<div class="history-cap"><span>${kind}</span><strong>${escapeHtml(cap.value)}</strong><button type="button" data-history-cap="${cap.id}" data-batch-id="${batch.id}" data-domain-id="${domain.id}">删除</button></div>`;
-}
-
-function confirmAction(message) {
-	return new Promise((resolve) => {
-		globalThis.eda.sys_Dialog.showConfirmationMessage(
-			message,
-			'去耦喵',
-			'确认删除',
-			'取消',
-			resolve,
-		);
-	});
-}
-
-function getRelevantManifests() {
-	return state.manifests.filter(batch => (
-		batch.documentUuid === state.input?.document?.uuid
-		&& batch.chipPrimitiveId === state.input?.selected?.primitiveId
-	));
-}
-
-function renderHistory() {
-	const relevant = getRelevantManifests();
-	const panel = document.querySelector('#historyPanel');
-	panel.hidden = relevant.length === 0;
-	const list = document.querySelector('#historyList');
-	list.innerHTML = relevant.map(batch => `<article class="history-batch">
-		<div class="history-batch-header"><div><strong>${new Date(batch.createdAt).toLocaleString()}</strong><span>${escapeHtml(batch.chipDesignator)}</span></div><button type="button" class="danger-button" data-remove-batch="${batch.id}">撤销整批</button></div>
-		${batch.domains.map(domain => `<div class="history-domain">
-			<div class="history-domain-header"><strong>${escapeHtml(domain.label)}</strong><button type="button" data-remove-generated-domain="${domain.id}" data-batch-id="${batch.id}">删除此域</button></div>
-			<div class="history-caps">${domain.caps.map(cap => renderHistoryCap(batch, domain, cap)).join('') || '<span class="empty-inline">仅保留电源标签</span>'}</div>
-		</div>`).join('')}
-	</article>`).join('');
-
-	list.querySelectorAll('[data-history-cap]').forEach((button) => {
-		button.addEventListener('click', async () => {
-			if (!await confirmAction('删除这个已生成电容及其电源/GND标签？'))
-				return;
-			try {
-				await removeCap(button.dataset.batchId, button.dataset.domainId, button.dataset.historyCap);
-			}
-			catch (error) {
-				setError(error instanceof Error ? error.message : String(error));
-			}
-		});
-	});
-	list.querySelectorAll('[data-remove-generated-domain]').forEach((button) => {
-		button.addEventListener('click', async () => {
-			if (!await confirmAction('删除这个电源域由去耦喵创建的全部内容？'))
-				return;
-			try {
-				await removeGeneratedDomain(button.dataset.batchId, button.dataset.removeGeneratedDomain);
-			}
-			catch (error) {
-				setError(error instanceof Error ? error.message : String(error));
-			}
-		});
-	});
-	list.querySelectorAll('[data-remove-batch]').forEach((button) => {
-		button.addEventListener('click', async () => {
-			if (!await confirmAction('撤销本次生成的全部标签和电容？'))
-				return;
-			try {
-				await removeBatch(button.dataset.removeBatch);
-			}
-			catch (error) {
-				setError(error instanceof Error ? error.message : String(error));
-			}
-		});
-	});
 }
 
 async function init() {
@@ -1393,7 +1209,6 @@ async function init() {
 			bulk: normalizeCapacitanceValue(storedValues.bulk) || DEFAULT_CAP_VALUES.bulk,
 			pin: normalizeCapacitanceValue(storedValues.pin) || DEFAULT_CAP_VALUES.pin,
 		};
-		state.manifests = EDA.sys_Storage.getExtensionUserConfig(MANIFESTS_STORAGE_KEY) ?? [];
 		state.domains = buildInitialDomains(state.input.selected.pins, state.values);
 		await refreshPrimitiveIdsSnapshot();
 
@@ -1442,7 +1257,6 @@ async function init() {
 		});
 		renderSelectedDevices();
 		renderAll();
-		renderHistory();
 	}
 	catch (error) {
 		setError(error instanceof Error ? error.message : String(error));

@@ -26,7 +26,7 @@ test('invokes mouse placement before asynchronous UI work', async () => {
 	assert.match(bundle, /capacitorValues\.v1/);
 	assert.match(bundle, /selectClosestPlacedComponent/);
 	assert.match(bundle, /extractDeviceCapacitance/);
-	assert.match(bundle, /for \(const drop of groundPlan\.drops\)/);
+	assert.match(bundle, /mapConcurrent/);
 	assert.match(bundle, /placeAllDomainsWithMouse/);
 	assert.match(bundle, /totalCaps/);
 	assert.match(bundle, /buildSharedBusPlan/);
@@ -37,6 +37,7 @@ test('invokes mouse placement before asynchronous UI work', async () => {
 	assert.match(html, /data-global-cap-value="bulk"/);
 	assert.match(html, /data-global-cap-value="pin"/);
 	assert.match(html, /class="pins-drawer"/);
+	assert.doesNotMatch(html, /historyPanel|生成记录/);
 	assert.match(source, /class="domain-summary"/);
 	assert.match(source, /class="summary-bulk-toggle"/);
 	assert.match(html, /class="notice-stack"/);
@@ -46,4 +47,6 @@ test('invokes mouse placement before asynchronous UI work', async () => {
 	assert.doesNotMatch(html, /data-use-current-device|Bulk|Bypass/);
 	assert.doesNotMatch(html, /STEP 1|STEP 2|STEP 3|placement-preview/);
 	assert.doesNotMatch(source, /createPowerFlag\(domain\.label, pin\.x, pin\.y\)/);
+	assert.doesNotMatch(source, /MANIFESTS_STORAGE_KEY|state\.manifests|替换现有去耦/);
+	assert.match(source, /本次 \$\{totalCaps\} 颗/);
 });

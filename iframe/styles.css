@@ -42,7 +42,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 }
 
 .topbar, .section-heading, .drawer-heading, .domain-editor-heading,
-.domain-section-title, .history-batch-header, .history-domain-header {
+.domain-section-title {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
@@ -54,7 +54,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .header-actions { display: flex; align-items: center; gap: 5px; }
 
 .quiet-button, .filter-button, .domain-section-title button, .add-cap-button,
-.danger-button, .history-domain button, .history-cap button {
+.danger-button {
 	min-height: 28px;
 	border: 1px solid var(--line);
 	border-radius: 7px;
@@ -278,20 +278,6 @@ input:focus, select:focus { border-color: var(--accent); }
 }
 .primary-button:hover { background: var(--accent-hover); }
 .primary-button:disabled { cursor: not-allowed; opacity: .45; }
-
-.history-panel { position: relative; }
-.history-panel > summary { min-height: 28px; cursor: pointer; list-style: none; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); padding: 5px 9px; color: var(--muted); font-weight: 650; }
-.history-panel > summary::-webkit-details-marker { display: none; }
-.history-list { position: absolute; z-index: 30; top: 34px; right: 0; display: grid; width: 440px; max-height: 400px; overflow: auto; gap: 6px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); box-shadow: 0 16px 40px rgba(30, 35, 50, .18); padding: 8px; }
-.history-batch { border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); padding: 8px; }
-.history-batch-header > div { display: grid; }
-.history-batch-header strong, .history-domain-header strong { font-size: 10px; }
-.history-batch-header span { color: var(--muted); font-size: 10px; }
-.history-domain { margin-top: 6px; border-top: 1px solid var(--line); padding-top: 6px; }
-.history-domain button, .history-cap button { min-height: 28px; border-color: transparent; background: transparent; padding: 3px 5px; color: var(--red); font-size: 10px; }
-.history-caps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
-.history-cap { display: flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); padding: 3px 5px; font-size: 10px; }
-.history-cap span { color: var(--muted); }
 
 @media (prefers-color-scheme: dark) {
 	:root {

@@ -5,18 +5,19 @@ import test from 'node:test';
 import {
 	buildBankPlan,
 	buildDomainRowOrigins,
-	buildGroundBusPlan,
 	buildInitialDomains,
 	buildSharedBusPlan,
 	extractDeviceCapacitance,
+	isDrawableWireLine,
 	isGroundPinName,
 	isPowerCandidate,
+	mapConcurrent,
+	matchesLibraryDevice,
 	normalizeCapacitanceValue,
 	orderVerticalPinsByRole,
 	selectCapacitorTextAttributes,
 	selectClosestPlacedComponent,
 	shiftCapacitorTextLeft,
-	shouldShiftCapacitorAttribute,
 	suggestPowerLabel,
 	validateDomains,
 } from '../iframe/app.mjs';
@@ -97,6 +98,16 @@ test('matches the settled anchor by nearest placement coordinate after draw_end'
 	assert.equal(selectClosestPlacedComponent([far, closest], { x: 100, y: 200 }), closest);
 });
 
+test('accepts only the selected native library device as a placement anchor', () => {
+	const device = { libraryUuid: 'library-a', uuid: 'device-a' };
+	const matching = { getState_Component: () => ({ libraryUuid: 'library-a', uuid: 'device-a' }) };
+	const other = { getState_Component: () => ({ libraryUuid: 'library-b', uuid: 'device-b' }) };
+
+	assert.equal(matchesLibraryDevice(matching, device), true);
+	assert.equal(matchesLibraryDevice(other, device), false);
+	assert.equal(matchesLibraryDevice({}, device), false);
+});
+
 test('orders bulk capacitors before per-pin capacitors in a connected bank', () => {
 	const [domain] = buildInitialDomains([pin(1, 'VDD'), pin(2, 'VDD')]);
 	const plan = buildBankPlan(domain);
@@ -123,14 +134,6 @@ test('maps larger EasyEDA Y to the visual power side', () => {
 
 	assert.equal(roles.powerPin, highY);
 	assert.equal(roles.groundPin, lowY);
-});
-
-test('moves only capacitor designator and value attributes', () => {
-	assert.equal(shouldShiftCapacitorAttribute('Designator'), true);
-	assert.equal(shouldShiftCapacitorAttribute('Name'), true);
-	assert.equal(shouldShiftCapacitorAttribute('Value'), true);
-	assert.equal(shouldShiftCapacitorAttribute('  value  '), true);
-	assert.equal(shouldShiftCapacitorAttribute('Supplier Part'), false);
 });
 
 function attribute(id, key, value, x, visible = true) {
@@ -200,41 +203,76 @@ test('fails generation when the attribute move is not applied', async () => {
 	}
 });
 
-test('builds one continuous ground bus with one shared flag point', () => {
-	const plan = buildGroundBusPlan([
-		{ x: 10, y: 70 },
-		{ x: 45, y: 70 },
-		{ x: 80, y: 65 },
-	]);
-
-	assert.deepEqual(plan.flag, { x: -10, y: 45 });
-	assert.deepEqual(plan.bus, [-10, 45, 80, 45]);
-	assert.deepEqual(plan.drops, [
-		[10, 70, 10, 45],
-		[45, 70, 45, 45],
-		[80, 65, 80, 45],
-	]);
-});
-
-test('uses the longest capacitor endpoints for both shared buses', () => {
+test('puts both labels above and below the first capacitor', () => {
 	const plan = buildSharedBusPlan([
 		{ x: 10, powerY: 20, groundY: -20 },
 		{ x: 50, powerY: 35, groundY: -35 },
 		{ x: 90, powerY: 25, groundY: -25 },
 	]);
 
-	assert.deepEqual(plan.power.flag, { x: -10, y: 35 });
-	assert.deepEqual(plan.power.bus, [-10, 35, 90, 35]);
+	assert.deepEqual(plan.power.flag, { x: 10, y: 35 });
+	assert.deepEqual(plan.power.bus, [10, 35, 90, 35]);
 	assert.deepEqual(plan.power.drops, [
 		[10, 20, 10, 35],
 		[90, 25, 90, 35],
 	]);
-	assert.deepEqual(plan.ground.flag, { x: -10, y: -35 });
-	assert.deepEqual(plan.ground.bus, [-10, -35, 90, -35]);
+	assert.deepEqual(plan.ground.flag, { x: 10, y: -35 });
+	assert.deepEqual(plan.ground.bus, [10, -35, 90, -35]);
 	assert.deepEqual(plan.ground.drops, [
 		[10, -20, 10, -35],
 		[90, -25, 90, -35],
 	]);
+});
+
+test('runs placement work concurrently while preserving result order', async () => {
+	let active = 0;
+	let maximum = 0;
+	const results = await mapConcurrent([10, 20, 30, 40], 2, async (value) => {
+		active += 1;
+		maximum = Math.max(maximum, active);
+		await new Promise(resolve => setTimeout(resolve, 2));
+		active -= 1;
+		return value / 10;
+	});
+	assert.deepEqual(results, [1, 2, 3, 4]);
+	assert.equal(maximum, 2);
+});
+
+test('waits for started placement work to settle before reporting a failure', async () => {
+	const events = [];
+	await assert.rejects(() => mapConcurrent([1, 2, 3], 2, async (value) => {
+		events.push(`start-${value}`);
+		if (value === 1)
+			throw new Error('placement failed');
+		await new Promise(resolve => setTimeout(resolve, 4));
+		events.push(`finish-${value}`);
+		return value;
+	}), /placement failed/);
+	assert.deepEqual(events, ['start-1', 'start-2', 'finish-2']);
+});
+
+test('uses each pin X coordinate when a capacitor symbol is not perfectly vertical', () => {
+	const plan = buildSharedBusPlan([
+		{ powerX: 10, groundX: 12, powerY: 20, groundY: -20 },
+		{ powerX: 50, groundX: 54, powerY: 30, groundY: -30 },
+	]);
+
+	assert.deepEqual(plan.power.flag, { x: 10, y: 30 });
+	assert.deepEqual(plan.power.drops, [[10, 20, 10, 30]]);
+	assert.deepEqual(plan.ground.flag, { x: 12, y: -30 });
+	assert.deepEqual(plan.ground.drops, [[12, -20, 12, -30]]);
+});
+
+test('skips zero-length buses for a one-capacitor power domain', () => {
+	const plan = buildSharedBusPlan([
+		{ powerX: 10, groundX: 10, powerY: 20, groundY: -20 },
+	]);
+
+	assert.equal(isDrawableWireLine(plan.power.bus), false);
+	assert.equal(isDrawableWireLine(plan.ground.bus), false);
+	assert.deepEqual(plan.power.drops, []);
+	assert.deepEqual(plan.ground.drops, []);
+	assert.equal(isDrawableWireLine([10, 20, 40, 20]), true);
 });
 
 test('lays every selected power network on its own row from one anchor', () => {

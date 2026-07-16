@@ -68,8 +68,6 @@ globalThis.eda = {
 				return previewInput;
 			if (key === 'decouplingMeow.capacitorDevices.v2')
 				return previewDevices;
-			if (key === 'decouplingMeow.manifests.v1')
-				return [];
 			return null;
 		},
 		setExtensionUserConfig: async () => true,

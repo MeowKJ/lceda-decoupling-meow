@@ -323,7 +323,7 @@ export async function generateForSelectedComponent(): Promise<void> {
 
 export function about(): void {
 	eda.sys_Dialog.showInformationMessage(
-		`去耦喵 v${extensionConfig.version}\n\n识别选中芯片的多个电源域，并按用户计划生成主电容、逐引脚去耦电容与连接母线，不修改芯片本体。所有生成内容都可按批次撤销。`,
+		`去耦喵 v${extensionConfig.version}\n\n识别选中芯片的多个电源域，并按用户计划快速追加主电容、逐引脚去耦电容与连接母线，不修改芯片本体或已有去耦。`,
 		'关于去耦喵',
 	);
 }
