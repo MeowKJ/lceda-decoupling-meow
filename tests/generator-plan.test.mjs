@@ -11,6 +11,7 @@ import {
 	isGroundPinName,
 	isPowerCandidate,
 	orderVerticalPinsByRole,
+	shouldShiftCapacitorAttribute,
 	suggestPowerLabel,
 	validateDomains,
 } from '../iframe/app.mjs';
@@ -85,6 +86,14 @@ test('maps larger EasyEDA Y to the visual power side', () => {
 
 	assert.equal(roles.powerPin, highY);
 	assert.equal(roles.groundPin, lowY);
+});
+
+test('moves only capacitor designator and value attributes', () => {
+	assert.equal(shouldShiftCapacitorAttribute('Designator'), true);
+	assert.equal(shouldShiftCapacitorAttribute('Name'), true);
+	assert.equal(shouldShiftCapacitorAttribute('Value'), true);
+	assert.equal(shouldShiftCapacitorAttribute('  value  '), true);
+	assert.equal(shouldShiftCapacitorAttribute('Supplier Part'), false);
 });
 
 test('builds one continuous ground bus with one shared flag point', () => {

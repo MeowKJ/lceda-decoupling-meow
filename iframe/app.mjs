@@ -559,6 +559,22 @@ async function setCapacitorValue(component, value) {
 	return await asyncComponent.done();
 }
 
+export function shouldShiftCapacitorAttribute(key) {
+	return ['DESIGNATOR', 'NAME', 'VALUE'].includes(String(key ?? '').trim().toUpperCase());
+}
+
+async function shiftCapacitorTextLeft(componentId, gridSize = 10) {
+	const attributes = await globalThis.eda.sch_PrimitiveAttribute.getAll(componentId);
+	for (const attribute of attributes) {
+		if (!shouldShiftCapacitorAttribute(attribute.getState_Key()))
+			continue;
+		const x = attribute.getState_X();
+		if (x === null)
+			continue;
+		await globalThis.eda.sch_PrimitiveAttribute.modify(attribute, { x: x - gridSize });
+	}
+}
+
 async function createCapacitorAt(cap, x, y, created) {
 	const device = deviceForCap(cap);
 	if (!device)
@@ -588,6 +604,7 @@ async function prepareCapacitor(component, cap) {
 	if (!rotated)
 		throw new Error(`旋转 ${cap.value} 电容失败。`);
 	await setCapacitorValue(rotated, cap.value);
+	await shiftCapacitorTextLeft(componentId);
 	const pins = await globalThis.eda.sch_PrimitiveComponent.getAllPinsByPrimitiveId(componentId);
 	if (!pins || pins.length !== 2)
 		throw new Error('所选电容器件必须恰好具有两个引脚。');
