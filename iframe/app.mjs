@@ -1,11 +1,13 @@
 const INPUT_STORAGE_KEY = 'decouplingMeow.generatorInput.v1';
-const DEVICE_STORAGE_KEY = 'decouplingMeow.capacitorDevice.v1';
+const DEVICES_STORAGE_KEY = 'decouplingMeow.capacitorDevices.v2';
+const LEGACY_DEVICE_STORAGE_KEY = 'decouplingMeow.capacitorDevice.v1';
 const MANIFESTS_STORAGE_KEY = 'decouplingMeow.manifests.v1';
+const IFRAME_ID = 'lceda-decoupling-meow-window';
 
 const POWER_PIN_PATTERNS = [
+	/^(?:VDD|VCC|AVDD|DVDD|PVDD|IOVDD|VDDIO|VCORE|VBAT|VREF|VIN|VIOIN|VINPA|VNWA|VOUT|VPP)[\w+-]*$/i,
 	/^(?:[ADP]|IO|USB|PLL|RTC)?VDD(?:[ADQ]|IO|CORE|CPU|GPU|MEM)?(?:[_-]?\d+)?$/i,
 	/^(?:[ADP]|IO)?VCC(?:A|D|IO)?(?:[_-]?\d+)?$/i,
-	/^(?:VBAT|VREF[+-]?|VCORE|AVDD|DVDD|PVDD|IOVDD|VDDIO|VIN|VOUT)$/i,
 ];
 
 const GROUND_PIN_PATTERNS = [
@@ -15,13 +17,16 @@ const GROUND_PIN_PATTERNS = [
 ];
 
 const state = {
-	device: null,
-	deviceResults: [],
+	devices: {
+		bulk: null,
+		pin: null,
+	},
 	domains: [],
 	input: null,
 	manifests: [],
 	onlyCandidates: true,
-	placementSide: 'auto',
+	placementPending: false,
+	primitiveIdsSnapshot: new Set(),
 };
 
 let sequence = 0;
@@ -72,6 +77,7 @@ function createCap(value, kind, pinNumber = '') {
 function createDomain(label) {
 	return {
 		bulkCaps: [createCap('4.7uF', 'bulk')],
+		bulkEnabled: true,
 		id: nextId('domain'),
 		label,
 		pinCaps: {},
@@ -232,11 +238,16 @@ function renderDomain(domain, index) {
 				<span>电源标签</span>
 				<input list="labelPresets" value="${escapeHtml(domain.label)}" data-domain-label="${domain.id}" />
 			</label>
-			<button class="domain-delete-button" type="button" data-delete-domain="${domain.id}">删除电源域</button>
+			<div class="domain-actions">
+				<button class="domain-delete-button" type="button" data-delete-domain="${domain.id}">删除电源域</button>
+			</div>
 		</div>
 		<div class="domain-section">
-			<div class="domain-section-title"><strong>主电容</strong><button type="button" data-add-bulk="${domain.id}">＋ 添加</button></div>
-			<div class="caps-row">${domain.bulkCaps.length ? domain.bulkCaps.map(cap => renderCapEditor(cap, domain.id)).join('') : '<span class="empty-inline">未添加主电容</span>'}</div>
+			<div class="domain-section-title">
+				<label class="bulk-toggle"><input type="checkbox" data-toggle-bulk="${domain.id}" ${domain.bulkEnabled !== false ? 'checked' : ''} /> 主电容</label>
+				<button type="button" data-add-bulk="${domain.id}" ${domain.bulkEnabled === false ? 'disabled' : ''}>＋ 添加</button>
+			</div>
+			<div class="caps-row ${domain.bulkEnabled === false ? 'disabled-caps' : ''}">${domain.bulkCaps.length ? domain.bulkCaps.map(cap => renderCapEditor(cap, domain.id)).join('') : '<span class="empty-inline">未添加主电容</span>'}</div>
 		</div>
 		<div class="domain-section pin-decoupling-section">
 			<div class="domain-section-title"><strong>引脚去耦</strong><span>${pins.length} 个引脚</span></div>
@@ -271,6 +282,15 @@ function renderDomains() {
 	list.querySelectorAll('[data-delete-domain]').forEach((button) => {
 		button.addEventListener('click', () => {
 			state.domains = state.domains.filter(domain => domain.id !== button.dataset.deleteDomain);
+			renderAll();
+		});
+	});
+
+	list.querySelectorAll('[data-toggle-bulk]').forEach((checkbox) => {
+		checkbox.addEventListener('change', () => {
+			const domain = state.domains.find(item => item.id === checkbox.dataset.toggleBulk);
+			if (domain)
+				domain.bulkEnabled = checkbox.checked;
 			renderAll();
 		});
 	});
@@ -330,7 +350,7 @@ export function validateDomains(domains) {
 			errors.push(`电源域 ${index + 1} 缺少标签。`);
 		if (!domain.pinNumbers?.length)
 			errors.push(`电源域 ${index + 1} 没有分配引脚。`);
-		for (const cap of [...(domain.bulkCaps ?? []), ...Object.values(domain.pinCaps ?? {}).flat()]) {
+		for (const cap of buildBankPlan(domain)) {
 			if (!String(cap.value ?? '').trim())
 				errors.push(`电源域 ${index + 1} 存在空电容值。`);
 		}
@@ -344,7 +364,7 @@ function countPlan() {
 	return state.domains.reduce((summary, domain) => {
 		summary.domains += 1;
 		summary.labels += domain.pinNumbers.length;
-		summary.bulkCaps += domain.bulkCaps.length;
+		summary.bulkCaps += domain.bulkEnabled === false ? 0 : domain.bulkCaps.length;
 		summary.pinCaps += Object.values(domain.pinCaps).flat().length;
 		return summary;
 	}, { domains: 0, labels: 0, bulkCaps: 0, pinCaps: 0 });
@@ -376,37 +396,53 @@ function minimalDevice(item) {
 	};
 }
 
-function renderSelectedDevice() {
-	const element = document.querySelector('#selectedDevice');
-	if (!state.device) {
-		element.textContent = '尚未选择；首次使用请搜索并选择一个两引脚电容器件。';
+function deviceKindLabel(kind) {
+	return kind === 'bulk' ? '主电容' : '引脚去耦电容';
+}
+
+function deviceForCap(cap) {
+	return state.devices[cap.kind] ?? null;
+}
+
+function renderSelectedDevice(kind) {
+	const device = state.devices[kind];
+	const element = document.querySelector(`[data-selected-device="${kind}"]`);
+	if (!device) {
+		element.textContent = `尚未选择${deviceKindLabel(kind)}器件。`;
 		element.classList.remove('ready');
 		return;
 	}
-	element.innerHTML = `<strong>${escapeHtml(state.device.name)}</strong><span>${escapeHtml(state.device.symbolName || '电容符号')}${state.device.footprintName ? ` · ${escapeHtml(state.device.footprintName)}` : ''}</span>`;
+	element.innerHTML = `<strong>${escapeHtml(device.name)}</strong><span>${escapeHtml(device.symbolName || '电容符号')}${device.footprintName ? ` · ${escapeHtml(device.footprintName)}` : ''}</span>`;
 	element.classList.add('ready');
 }
 
-async function searchDevices() {
+function renderSelectedDevices() {
+	renderSelectedDevice('bulk');
+	renderSelectedDevice('pin');
+}
+
+async function saveDevices() {
+	await globalThis.eda.sys_Storage.setExtensionUserConfig(DEVICES_STORAGE_KEY, state.devices);
+}
+
+async function useNativeSelectedDevice(kind) {
 	setError('');
-	const keyword = document.querySelector('#deviceSearchInput').value.trim();
-	if (!keyword) {
-		setError('请输入电容器件搜索关键字。');
-		return;
-	}
-	setLoading(true, '正在搜索器件库…', keyword);
+	setLoading(true, '正在读取嘉立创原生器件库…', deviceKindLabel(kind));
 	try {
-		state.deviceResults = await globalThis.eda.lib_Device.search(keyword, undefined, undefined, undefined, 30, 1);
-		const select = document.querySelector('#deviceResults');
-		select.innerHTML = state.deviceResults.length
-			? state.deviceResults.map((item, index) => `<option value="${index}">${escapeHtml(item.name)}${item.symbol?.name ? ` · ${escapeHtml(item.symbol.name)}` : ''}${item.footprint?.name ? ` · ${escapeHtml(item.footprint.name)}` : ''}</option>`).join('')
-			: '<option value="">没有搜索结果</option>';
-		if (state.deviceResults.length) {
-			select.selectedIndex = 0;
-			state.device = minimalDevice(state.deviceResults[0]);
-			await globalThis.eda.sys_Storage.setExtensionUserConfig(DEVICE_STORAGE_KEY, state.device);
-			renderSelectedDevice();
-		}
+		const selected = await globalThis.eda.lib_SelectControl.getSelectedLibraryRowInfo();
+		if (!selected?.uuid || !selected.libraryUuid)
+			throw new Error('请先在嘉立创 EDA 底部器件库中点选一个电容器件。');
+		const device = await globalThis.eda.lib_Device.get(selected.uuid, selected.libraryUuid);
+		if (!device)
+			throw new Error('原生库当前选中项不是可用器件，请选择一个两引脚电容器件。');
+		state.devices[kind] = minimalDevice({
+			...device,
+			libraryUuid: selected.libraryUuid,
+			uuid: selected.uuid,
+		});
+		await saveDevices();
+		renderSelectedDevice(kind);
+		setSuccess(`已将原生库当前器件用于${deviceKindLabel(kind)}。`);
 	}
 	catch (error) {
 		setError(error instanceof Error ? error.message : String(error));
@@ -416,64 +452,12 @@ async function searchDevices() {
 	}
 }
 
-function boundsOfPins(input) {
-	const pins = input?.selected?.pins ?? [];
-	const xs = pins.map(pin => Number(pin.x)).filter(Number.isFinite);
-	const ys = pins.map(pin => Number(pin.y)).filter(Number.isFinite);
-	const centerX = Number(input?.selected?.x ?? 0);
-	const centerY = Number(input?.selected?.y ?? 0);
-	return {
-		centerX,
-		centerY,
-		maxX: xs.length ? Math.max(...xs) : centerX,
-		maxY: ys.length ? Math.max(...ys) : centerY,
-		minX: xs.length ? Math.min(...xs) : centerX,
-		minY: ys.length ? Math.min(...ys) : centerY,
-	};
-}
-
-export function buildGenerationPlan(input, domains, placementSide = 'auto') {
-	const bounds = boundsOfPins(input);
-	const plan = [];
-	for (const [domainIndex, domain] of domains.entries()) {
-		const domainPlan = {
-			caps: [],
-			id: domain.id,
-			label: domain.label,
-			pinLabels: [],
-		};
-
-		for (const pinNumber of domain.pinNumbers) {
-			const pin = input.selected.pins.find(item => String(item.number) === String(pinNumber));
-			if (!pin)
-				continue;
-			domainPlan.pinLabels.push({ pinNumber: String(pin.number), x: pin.x, y: pin.y });
-			const pinSide = placementSide === 'auto'
-				? (Number(pin.x) < bounds.centerX ? 'left' : 'right')
-				: placementSide;
-			const pinCaps = domain.pinCaps[String(pin.number)] ?? [];
-			for (const [capIndex, cap] of pinCaps.entries()) {
-				const direction = pinSide === 'left' ? -1 : 1;
-				domainPlan.caps.push({
-					...cap,
-					x: Number(pin.x) + direction * (65 + capIndex * 38),
-					y: Number(pin.y),
-				});
-			}
-		}
-
-		const bankSide = placementSide === 'left' ? 'left' : 'right';
-		const bankX = bankSide === 'left' ? bounds.minX - 90 : bounds.maxX + 90;
-		for (const [capIndex, cap] of domain.bulkCaps.entries()) {
-			domainPlan.caps.push({
-				...cap,
-				x: bankX + (bankSide === 'left' ? -1 : 1) * capIndex * 38,
-				y: bounds.minY - 55 - domainIndex * 48,
-			});
-		}
-		plan.push(domainPlan);
-	}
-	return plan;
+export function buildBankPlan(domain) {
+	const pinCaps = (domain?.pinNumbers ?? []).flatMap((pinNumber) => {
+		return domain?.pinCaps?.[String(pinNumber)] ?? [];
+	});
+	const bulkCaps = domain?.bulkEnabled === false ? [] : (domain?.bulkCaps ?? []);
+	return [...bulkCaps, ...pinCaps];
 }
 
 function primitiveIdOf(primitive) {
@@ -506,11 +490,14 @@ async function setCapacitorValue(component, value) {
 	return await asyncComponent.done();
 }
 
-async function createCapacitor(cap, domainLabel, createdIds) {
+async function createCapacitorAt(cap, x, y, created) {
+	const device = deviceForCap(cap);
+	if (!device)
+		throw new Error(`${deviceKindLabel(cap.kind)}尚未选择器件。`);
 	const component = await globalThis.eda.sch_PrimitiveComponent.create(
-		{ libraryUuid: state.device.libraryUuid, uuid: state.device.uuid },
-		cap.x,
-		cap.y,
+		{ libraryUuid: device.libraryUuid, uuid: device.uuid },
+		x,
+		y,
 		'',
 		90,
 		false,
@@ -520,37 +507,116 @@ async function createCapacitor(cap, domainLabel, createdIds) {
 	if (!component)
 		throw new Error(`创建 ${cap.value} 电容失败。`);
 	const componentId = primitiveIdOf(component);
-	createdIds.push(componentId);
-	await setCapacitorValue(component, cap.value);
+	created.componentIds.push(componentId);
+	return await prepareCapacitor(component, cap);
+}
 
+async function prepareCapacitor(component, cap) {
+	const componentId = primitiveIdOf(component);
+	const x = component.getState_X();
+	const y = component.getState_Y();
+	const rotated = await globalThis.eda.sch_PrimitiveComponent.modify(componentId, { rotation: 90, x, y });
+	if (!rotated)
+		throw new Error(`旋转 ${cap.value} 电容失败。`);
+	await setCapacitorValue(rotated, cap.value);
 	const pins = await globalThis.eda.sch_PrimitiveComponent.getAllPinsByPrimitiveId(componentId);
-	if (!pins || pins.length < 2)
-		throw new Error('所选电容器件不是有效的两引脚器件。');
-	const powerPin = pins.find(pin => pin.getState_PinNumber() === '1') ?? pins[0];
-	const groundPin = pins.find(pin => pin !== powerPin) ?? pins[1];
-	const powerFlagId = await createPowerFlag(domainLabel, powerPin.getState_X(), powerPin.getState_Y());
-	createdIds.push(powerFlagId);
-	const groundFlagId = await createGroundFlag(groundPin.getState_X(), groundPin.getState_Y());
-	createdIds.push(groundFlagId);
-
+	if (!pins || pins.length !== 2)
+		throw new Error('所选电容器件必须恰好具有两个引脚。');
+	const { groundPin, powerPin } = orderVerticalPinsByRole(pins);
+	if (groundPin.getState_Y() === powerPin.getState_Y())
+		throw new Error('电容符号旋转后引脚仍未竖直排列，请更换标准电容器件。');
 	return {
+		cap,
 		componentId,
-		flagIds: [powerFlagId, groundFlagId],
-		id: cap.id,
-		kind: cap.kind,
-		pinNumber: cap.pinNumber ?? '',
-		value: cap.value,
+		groundPin,
+		powerPin,
 	};
 }
 
-async function rollback(ids) {
-	if (!ids.length)
-		return;
-	try {
-		await globalThis.eda.sch_PrimitiveComponent.delete([...new Set(ids)]);
+export function orderVerticalPinsByRole(pins) {
+	const sortedPins = [...pins].sort((a, b) => a.getState_Y() - b.getState_Y());
+	return {
+		groundPin: sortedPins[0],
+		powerPin: sortedPins[1],
+	};
+}
+
+async function alignCapToPowerBus(placed, powerBusY) {
+	const deltaY = powerBusY - placed.powerPin.getState_Y();
+	if (Math.abs(deltaY) < 0.001)
+		return placed;
+	const [component] = await globalThis.eda.sch_PrimitiveComponent.get([placed.componentId]);
+	if (!component)
+		throw new Error(`无法重新读取 ${placed.cap.value} 电容。`);
+	const moved = await globalThis.eda.sch_PrimitiveComponent.modify(placed.componentId, {
+		x: component.getState_X(),
+		y: component.getState_Y() + deltaY,
+	});
+	if (!moved)
+		throw new Error(`无法对齐 ${placed.cap.value} 电容的电源引脚。`);
+	const pins = await globalThis.eda.sch_PrimitiveComponent.getAllPinsByPrimitiveId(placed.componentId);
+	const { groundPin, powerPin } = orderVerticalPinsByRole(pins);
+	return { ...placed, groundPin, powerPin };
+}
+
+export function buildGroundBusPlan(points, clearance = 20) {
+	if (!points?.length)
+		throw new Error('接地母线至少需要一个连接点。');
+	const busY = Math.min(...points.map(point => point.y)) - clearance;
+	const flagX = Math.min(...points.map(point => point.x)) - clearance;
+	const rightX = Math.max(...points.map(point => point.x));
+	return {
+		bus: [flagX, busY, rightX, busY],
+		drops: points.map(point => [point.x, point.y, point.x, busY]),
+		flag: { x: flagX, y: busY },
+	};
+}
+
+export function buildDomainRowOrigins(domains, anchorX, anchorY, rowPitch = 100) {
+	return (domains ?? []).map((domain, index) => ({
+		domain,
+		x: anchorX,
+		y: anchorY - index * rowPitch,
+	}));
+}
+
+async function createWire(line, net, created) {
+	const wire = await globalThis.eda.sch_PrimitiveWire.create(line, net);
+	if (!wire)
+		throw new Error(`创建${net ? ` ${net}` : ''}连接导线失败。`);
+	const id = primitiveIdOf(wire);
+	created.wireIds.push(id);
+	return id;
+}
+
+async function createConnectedBankWires(powerBus, groundPlan, created) {
+	const beforeIds = new Set(await globalThis.eda.sch_PrimitiveWire.getAllPrimitiveId());
+	await createWire(powerBus, undefined, created);
+	await createWire(groundPlan.bus, undefined, created);
+	for (const drop of groundPlan.drops)
+		await createWire(drop, undefined, created);
+	const stableIds = (await globalThis.eda.sch_PrimitiveWire.getAllPrimitiveId())
+		.filter(id => !beforeIds.has(id));
+	created.wireIds.push(...stableIds);
+	return stableIds;
+}
+
+async function rollback(created) {
+	for (const id of [...new Set(created.wireIds)].reverse()) {
+		try {
+			await globalThis.eda.sch_PrimitiveWire.delete([id]);
+		}
+		catch {
+			// Merged intermediate wire IDs may already be stale.
+		}
 	}
-	catch {
-		// Keep the original generation error; the user can remove leftovers manually.
+	for (const id of [...new Set(created.componentIds)].reverse()) {
+		try {
+			await globalThis.eda.sch_PrimitiveComponent.delete([id]);
+		}
+		catch {
+			// Keep the original placement error.
+		}
 	}
 }
 
@@ -558,21 +624,111 @@ async function saveManifests() {
 	await globalThis.eda.sys_Storage.setExtensionUserConfig(MANIFESTS_STORAGE_KEY, state.manifests);
 }
 
-async function generate() {
-	setError('');
-	setSuccess('');
-	const errors = validateDomains(state.domains);
-	if (errors.length) {
-		setError(errors.join(' '));
-		return;
+async function refreshPrimitiveIdsSnapshot() {
+	state.primitiveIdsSnapshot = new Set(await globalThis.eda.sch_PrimitiveComponent.getAllPrimitiveId());
+}
+
+async function restoreGeneratorWindow() {
+	try {
+		await globalThis.eda.sys_IFrame.showIFrame(IFRAME_ID);
 	}
-	if (!state.device) {
-		setError('请先搜索并选择一个两引脚电容器件。');
-		return;
+	catch {
+		// V3.2.149 restores the window but can still throw an internal cmdKey error.
+	}
+}
+
+async function clearFollowMouseTip() {
+	try {
+		await globalThis.eda.sys_Message.removeFollowMouseTip();
+	}
+	catch {
+		// Removing an already detached tip can throw the same internal cmdKey error.
+	}
+}
+
+function domainPlacementErrors(domain) {
+	const errors = validateDomains([domain]);
+	const caps = buildBankPlan(domain);
+	if (!caps.length)
+		errors.push('该电源域至少需要一个电容。');
+	for (const kind of new Set(caps.map(cap => cap.kind))) {
+		if (!state.devices[kind])
+			errors.push(`请先从嘉立创原生器件库选择${deviceKindLabel(kind)}器件。`);
+	}
+	return errors;
+}
+
+async function generateDomainBank(domain, preparedAnchor, anchorX, anchorY, created) {
+	const caps = buildBankPlan(domain);
+	let placedCaps = [preparedAnchor];
+	for (const [index, cap] of caps.slice(1).entries()) {
+		placedCaps.push(await createCapacitorAt(cap, anchorX + (index + 1) * 35, anchorY, created));
+	}
+	const powerBusY = placedCaps[0].powerPin.getState_Y();
+	placedCaps = await Promise.all(placedCaps.map(cap => alignCapToPowerBus(cap, powerBusY)));
+
+	const domainManifest = {
+		bankPowerLabelId: '',
+		caps: [],
+		groundFlagPoint: null,
+		id: domain.id,
+		label: domain.label,
+		groundFlagId: '',
+		powerFlagPoint: null,
+		powerLabelIds: [],
+		wireIds: [],
+	};
+	for (const pinNumber of domain.pinNumbers) {
+		const pin = getPin(pinNumber);
+		if (!pin)
+			continue;
+		const labelId = await createPowerFlag(domain.label, pin.x, pin.y);
+		created.componentIds.push(labelId);
+		domainManifest.powerLabelIds.push(labelId);
 	}
 
-	const plan = buildGenerationPlan(state.input, state.domains, state.placementSide);
-	const createdIds = [];
+	const powerPins = placedCaps.map(item => item.powerPin);
+	const leftX = Math.min(...powerPins.map(pin => pin.getState_X())) - 20;
+	const rightX = Math.max(...powerPins.map(pin => pin.getState_X()));
+	const bankPowerLabelId = await createPowerFlag(domain.label, leftX, powerBusY);
+	domainManifest.bankPowerLabelId = bankPowerLabelId;
+	domainManifest.powerFlagPoint = { x: leftX, y: powerBusY };
+	created.componentIds.push(bankPowerLabelId);
+	domainManifest.powerLabelIds.push(bankPowerLabelId);
+	const powerBus = [leftX, powerBusY, rightX, powerBusY];
+
+	const groundPoints = placedCaps.map(placed => ({
+		x: placed.groundPin.getState_X(),
+		y: placed.groundPin.getState_Y(),
+	}));
+	const groundPlan = buildGroundBusPlan(groundPoints);
+	domainManifest.groundFlagId = await createGroundFlag(groundPlan.flag.x, groundPlan.flag.y);
+	domainManifest.groundFlagPoint = groundPlan.flag;
+	created.componentIds.push(domainManifest.groundFlagId);
+	domainManifest.wireIds = await createConnectedBankWires(powerBus, groundPlan, created);
+
+	for (const placed of placedCaps) {
+		domainManifest.caps.push({
+			componentId: placed.componentId,
+			groundPoint: {
+				x: placed.groundPin.getState_X(),
+				y: placed.groundPin.getState_Y(),
+			},
+			id: placed.cap.id,
+			kind: placed.cap.kind,
+			pinNumber: placed.cap.pinNumber ?? '',
+			powerPoint: {
+				x: placed.powerPin.getState_X(),
+				y: placed.powerPin.getState_Y(),
+			},
+			value: placed.cap.value,
+		});
+	}
+	return domainManifest;
+}
+
+async function finalizeAllDomainsPlacement(domains, anchorComponent) {
+	const created = { componentIds: [primitiveIdOf(anchorComponent)], wireIds: [] };
 	const batch = {
 		chipDesignator: state.input.selected.designator,
 		chipPrimitiveId: state.input.selected.primitiveId,
@@ -582,65 +738,203 @@ async function generate() {
 		id: nextId('batch'),
 	};
 
-	setLoading(true, '去耦喵正在生成…', '创建电源标签和电容器件。');
 	try {
-		for (const domain of plan) {
-			const domainManifest = {
-				caps: [],
-				id: domain.id,
-				label: domain.label,
-				powerLabelIds: [],
-			};
-			for (const pinLabel of domain.pinLabels) {
-				const id = await createPowerFlag(domain.label, pinLabel.x, pinLabel.y);
-				createdIds.push(id);
-				domainManifest.powerLabelIds.push(id);
-			}
-			for (const cap of domain.caps) {
-				domainManifest.caps.push(await createCapacitor(cap, domain.label, createdIds));
-			}
-			batch.domains.push(domainManifest);
+		await clearFollowMouseTip();
+		const anchorX = anchorComponent.getState_X();
+		const anchorY = anchorComponent.getState_Y();
+		let totalCaps = 0;
+		const rows = buildDomainRowOrigins(domains, anchorX, anchorY);
+		for (const [index, row] of rows.entries()) {
+			const { domain } = row;
+			const caps = buildBankPlan(domain);
+			const preparedAnchor = index === 0
+				? await prepareCapacitor(anchorComponent, caps[0])
+				: await createCapacitorAt(caps[0], row.x, row.y, created);
+			batch.domains.push(await generateDomainBank(domain, preparedAnchor, row.x, row.y, created));
+			totalCaps += caps.length;
 		}
-
 		state.manifests.unshift(batch);
 		await saveManifests();
-		setSuccess(`已生成 ${plan.length} 个电源域、${createdIds.length} 个图元。可在下方按项删除或撤销整批。`);
+		setSuccess(`已一次生成 ${domains.length} 个电源网络、${totalCaps} 个电容；每个网络使用独立母线和一个 GND 标志。`);
 		renderHistory();
-		await globalThis.eda.dmt_EditorControl.activateDocument(state.input.document.tabId);
-		await globalThis.eda.sch_SelectControl.clearSelected();
-		await globalThis.eda.sch_SelectControl.doSelectPrimitives(createdIds);
-		await globalThis.eda.dmt_EditorControl.zoomToSelectedPrimitives(state.input.document.tabId);
 	}
 	catch (error) {
-		await rollback(createdIds);
-		setError(`${error instanceof Error ? error.message : String(error)} 本次已创建内容已尝试回滚。`);
+		await rollback(created);
+		setError(`${error instanceof Error ? error.message : String(error)} 本次放置已尝试回滚。`);
 	}
 	finally {
-		setLoading(false);
+		state.placementPending = false;
+		await clearFollowMouseTip();
+		await restoreGeneratorWindow();
 	}
 }
 
-function allIdsForCap(cap) {
-	return [cap.componentId, ...(cap.flagIds ?? [])].filter(Boolean);
+function sleep(ms) {
+	return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function allIdsForDomain(domain) {
-	return [
-		...(domain.powerLabelIds ?? []),
-		...(domain.caps ?? []).flatMap(allIdsForCap),
-	].filter(Boolean);
+async function waitForPlacedComponent(ignoredIds, timeoutMs = 120000) {
+	const EDA = globalThis.eda;
+	const expiresAt = Date.now() + timeoutMs;
+	while (Date.now() < expiresAt) {
+		const ids = await EDA.sch_PrimitiveComponent.getAllPrimitiveId();
+		const placedId = ids.find(id => !ignoredIds.has(id));
+		if (placedId) {
+			const components = await EDA.sch_PrimitiveComponent.get([placedId]);
+			if (components[0])
+				return components[0];
+		}
+		await sleep(100);
+	}
+	throw new Error('等待鼠标落位超时，请重新点击放置。');
 }
 
-function allIdsForBatch(batch) {
-	return (batch.domains ?? []).flatMap(allIdsForDomain);
+async function finishMousePlacementTool() {
+	const schematicRuntime = globalThis.parent?.SCH ?? globalThis.SCH;
+	if (typeof schematicRuntime?.doCommand !== 'function')
+		throw new Error('当前客户端没有提供结束鼠标放置工具的命令。');
+	await schematicRuntime.doCommand('draw_end');
+	await sleep(50);
 }
 
-async function deletePrimitiveIds(ids) {
-	if (!ids.length)
+function exposeLegacyWindowEvent(event) {
+	const bindings = [{ target: globalThis, value: event }];
+	if (globalThis.parent && globalThis.parent !== globalThis) {
+		const frameRect = globalThis.frameElement?.getBoundingClientRect();
+		bindings.push({
+			target: globalThis.parent,
+			value: {
+				button: event.button,
+				buttons: event.buttons,
+				clientX: event.clientX + (frameRect?.x ?? 0),
+				clientY: event.clientY + (frameRect?.y ?? 0),
+				type: event.type,
+			},
+		});
+	}
+	const previous = bindings.map(({ target }) => Object.getOwnPropertyDescriptor(target, 'event'));
+	for (const { target, value } of bindings) {
+		Object.defineProperty(target, 'event', {
+			configurable: true,
+			value,
+		});
+	}
+	return () => {
+		for (const [index, { target }] of bindings.entries()) {
+			if (previous[index])
+				Object.defineProperty(target, 'event', previous[index]);
+			else
+				delete target.event;
+		}
+	};
+}
+
+async function placeAllDomainsWithMouse(mouseEvent) {
+	setError('');
+	setSuccess('');
+	const domains = state.domains.filter(domain => domain.pinNumbers.length > 0);
+	if (!domains.length) {
+		setError('请至少选择一个电源网络。');
 		return;
-	const deleted = await globalThis.eda.sch_PrimitiveComponent.delete([...new Set(ids)]);
-	if (!deleted)
-		throw new Error('部分图元可能已被手动删除，批量删除没有完全成功。');
+	}
+	const errors = domains.flatMap((domain) => {
+		return domainPlacementErrors(domain).map(message => `${domain.label || '未命名网络'}：${message}`);
+	});
+	if (errors.length) {
+		setError(errors.join(' '));
+		return;
+	}
+	if (state.placementPending) {
+		setError('当前整批网络正在等待鼠标落位。');
+		return;
+	}
+
+	const EDA = globalThis.eda;
+	const firstCap = buildBankPlan(domains[0])[0];
+	const anchorDevice = deviceForCap(firstCap);
+	const beforeIds = new Set(state.primitiveIdsSnapshot);
+	state.placementPending = true;
+	const restoreWindowEvent = exposeLegacyWindowEvent(mouseEvent);
+
+	try {
+		const attachPromise = EDA.sch_PrimitiveComponent.placeComponentWithMouse({
+			libraryUuid: anchorDevice.libraryUuid,
+			uuid: anchorDevice.uuid,
+		});
+		await EDA.sys_Message.showFollowMouseTip(`点击画布放置 ${domains.length} 个电源网络的去耦组。`);
+		await EDA.sys_IFrame.hideIFrame(IFRAME_ID);
+		const attached = await attachPromise;
+		if (!attached)
+			throw new Error('电容器件未能绑定到鼠标。');
+		await sleep(50);
+		const attachedIds = await EDA.sch_PrimitiveComponent.getAllPrimitiveId();
+		const ignoredIds = new Set([...beforeIds, ...attachedIds]);
+		await waitForPlacedComponent(ignoredIds);
+		await finishMousePlacementTool();
+		const settledIds = (await EDA.sch_PrimitiveComponent.getAllPrimitiveId()).filter(id => !beforeIds.has(id));
+		const settledAnchor = settledIds.length
+			? (await EDA.sch_PrimitiveComponent.get(settledIds))[0]
+			: undefined;
+		if (!settledAnchor)
+			throw new Error('放置工具结束后未找到已落下的锚点电容。');
+		await finalizeAllDomainsPlacement(domains, settledAnchor);
+	}
+	catch (error) {
+		state.placementPending = false;
+		await clearFollowMouseTip();
+		await restoreGeneratorWindow();
+		setError(error instanceof Error ? error.message : String(error));
+	}
+	finally {
+		restoreWindowEvent();
+		await refreshPrimitiveIdsSnapshot();
+	}
+}
+
+function emptyPrimitiveSet() {
+	return { componentIds: [], wireIds: [] };
+}
+
+function mergePrimitiveSets(...sets) {
+	return {
+		componentIds: sets.flatMap(set => set.componentIds ?? []).filter(Boolean),
+		wireIds: sets.flatMap(set => set.wireIds ?? []).filter(Boolean),
+	};
+}
+
+function primitivesForCap(cap) {
+	return {
+		componentIds: [cap.componentId, cap.groundFlagId, ...(cap.flagIds ?? [])].filter(Boolean),
+		wireIds: [cap.groundWireId].filter(Boolean),
+	};
+}
+
+function primitivesForDomain(domain) {
+	return mergePrimitiveSets(
+		{ componentIds: [...(domain.powerLabelIds ?? []), domain.groundFlagId].filter(Boolean), wireIds: domain.wireIds ?? [] },
+		...(domain.caps ?? []).map(primitivesForCap),
+	);
+}
+
+function primitivesForBatch(batch) {
+	return mergePrimitiveSets(...(batch.domains ?? []).map(primitivesForDomain));
+}
+
+async function deletePrimitiveSet(set = emptyPrimitiveSet()) {
+	try {
+		if (set.wireIds.length)
+			await globalThis.eda.sch_PrimitiveWire.delete([...new Set(set.wireIds)]);
+	}
+	catch {
+		// Already missing wires should not prevent manifest cleanup.
+	}
+	try {
+		if (set.componentIds.length)
+			await globalThis.eda.sch_PrimitiveComponent.delete([...new Set(set.componentIds)]);
+	}
+	catch {
+		// Already missing components should not prevent manifest cleanup.
+	}
 }
 
 async function removeCap(batchId, domainId, capId) {
@@ -649,8 +943,56 @@ async function removeCap(batchId, domainId, capId) {
 	const cap = domain?.caps.find(item => item.id === capId);
 	if (!batch || !domain || !cap)
 		return;
-	await deletePrimitiveIds(allIdsForCap(cap));
+	const supportsSharedBusRebuild = cap.powerPoint && cap.groundPoint
+		&& domain.powerFlagPoint && domain.groundFlagPoint;
+	if (!supportsSharedBusRebuild) {
+		await deletePrimitiveSet(primitivesForCap(cap));
+		domain.caps = domain.caps.filter(item => item.id !== capId);
+		await saveManifests();
+		renderHistory();
+		return;
+	}
+
+	await deletePrimitiveSet({
+		componentIds: [cap.componentId],
+		wireIds: domain.wireIds ?? [],
+	});
 	domain.caps = domain.caps.filter(item => item.id !== capId);
+	if (!domain.caps.length) {
+		await deletePrimitiveSet(primitivesForDomain(domain));
+		batch.domains = batch.domains.filter(item => item.id !== domainId);
+		if (!batch.domains.length)
+			state.manifests = state.manifests.filter(item => item.id !== batchId);
+		await saveManifests();
+		renderHistory();
+		return;
+	}
+
+	const created = { componentIds: [], wireIds: [] };
+	const rightPowerX = Math.max(...domain.caps.map(item => item.powerPoint.x));
+	const rightGroundX = Math.max(...domain.caps.map(item => item.groundPoint.x));
+	const powerBus = [
+		domain.powerFlagPoint.x,
+		domain.powerFlagPoint.y,
+		rightPowerX,
+		domain.powerFlagPoint.y,
+	];
+	const groundBus = [
+		domain.groundFlagPoint.x,
+		domain.groundFlagPoint.y,
+		rightGroundX,
+		domain.groundFlagPoint.y,
+	];
+	const groundDrops = domain.caps.map(item => [
+		item.groundPoint.x,
+		item.groundPoint.y,
+		item.groundPoint.x,
+		domain.groundFlagPoint.y,
+	]);
+	domain.wireIds = await createConnectedBankWires(powerBus, {
+		bus: groundBus,
+		drops: groundDrops,
+	}, created);
 	await saveManifests();
 	renderHistory();
 }
@@ -660,7 +1002,7 @@ async function removeGeneratedDomain(batchId, domainId) {
 	const domain = batch?.domains.find(item => item.id === domainId);
 	if (!batch || !domain)
 		return;
-	await deletePrimitiveIds(allIdsForDomain(domain));
+	await deletePrimitiveSet(primitivesForDomain(domain));
 	batch.domains = batch.domains.filter(item => item.id !== domainId);
 	if (!batch.domains.length)
 		state.manifests = state.manifests.filter(item => item.id !== batchId);
@@ -672,7 +1014,7 @@ async function removeBatch(batchId) {
 	const batch = state.manifests.find(item => item.id === batchId);
 	if (!batch)
 		return;
-	await deletePrimitiveIds(allIdsForBatch(batch));
+	await deletePrimitiveSet(primitivesForBatch(batch));
 	state.manifests = state.manifests.filter(item => item.id !== batchId);
 	await saveManifests();
 	renderHistory();
@@ -759,9 +1101,15 @@ async function init() {
 		if (!state.input)
 			throw new Error('没有找到生成输入，请关闭窗口后重新运行去耦喵。');
 
-		state.device = EDA.sys_Storage.getExtensionUserConfig(DEVICE_STORAGE_KEY) ?? null;
+		const legacyDevice = EDA.sys_Storage.getExtensionUserConfig(LEGACY_DEVICE_STORAGE_KEY) ?? null;
+		const storedDevices = EDA.sys_Storage.getExtensionUserConfig(DEVICES_STORAGE_KEY) ?? {};
+		state.devices = {
+			bulk: storedDevices.bulk ?? legacyDevice,
+			pin: storedDevices.pin ?? legacyDevice,
+		};
 		state.manifests = EDA.sys_Storage.getExtensionUserConfig(MANIFESTS_STORAGE_KEY) ?? [];
 		state.domains = buildInitialDomains(state.input.selected.pins);
+		await refreshPrimitiveIdsSnapshot();
 
 		document.querySelector('#componentBadge').textContent = `${state.input.selected.designator} · ${state.input.selected.pins.length} Pins`;
 		document.querySelector('#pinSearch').addEventListener('input', renderPins);
@@ -774,30 +1122,21 @@ async function init() {
 			state.domains.push(createDomain('VDD'));
 			renderAll();
 		});
-		document.querySelector('#deviceSearchButton').addEventListener('click', searchDevices);
-		document.querySelector('#deviceResults').addEventListener('change', async (event) => {
-			const item = state.deviceResults[Number(event.currentTarget.value)];
-			if (!item)
-				return;
-			state.device = minimalDevice(item);
-			await EDA.sys_Storage.setExtensionUserConfig(DEVICE_STORAGE_KEY, state.device);
-			renderSelectedDevice();
-		});
-		document.querySelectorAll('[data-side]').forEach((button) => {
+		document.querySelectorAll('[data-use-native-device]').forEach((button) => {
 			button.addEventListener('click', () => {
-				state.placementSide = button.dataset.side;
-				document.querySelectorAll('[data-side]').forEach(item => item.classList.toggle('active', item === button));
+				void useNativeSelectedDevice(button.dataset.useNativeDevice);
 			});
 		});
-		document.querySelector('#generateButton').addEventListener('click', generate);
-
-		renderSelectedDevice();
+		document.querySelector('#placeAllButton').addEventListener('click', (event) => {
+			void placeAllDomainsWithMouse(event);
+		});
+		renderSelectedDevices();
 		renderAll();
 		renderHistory();
 	}
 	catch (error) {
 		setError(error instanceof Error ? error.message : String(error));
-		document.querySelector('#generateButton').disabled = true;
+		document.querySelector('#placeAllButton').disabled = true;
 	}
 }
 

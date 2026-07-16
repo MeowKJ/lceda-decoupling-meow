@@ -109,7 +109,7 @@ async function collectGeneratorInput(): Promise<GeneratorInput> {
 
 	const enetComponent = rawDesignator ? findEnetComponent(netlist, rawDesignator) : undefined;
 	const enetPins = new Map(
-		Object.values(enetComponent.pinInfoMap ?? {}).map(pin => [
+		Object.values(enetComponent?.pinInfoMap ?? {}).map(pin => [
 			String(pin.number ?? pin.props?.['Pin Number'] ?? ''),
 			pin,
 		]),

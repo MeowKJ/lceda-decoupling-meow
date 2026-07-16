@@ -64,18 +64,21 @@ GND、VSS、AGND等地引脚会从候选中排除。
 - 每个电源域：`4.7uF × 1` 主电容；
 - 每个电源引脚：`100nF × 1` 去耦电容；
 - 接地标签：`GND`；
-- 电容库器件：首次使用由用户搜索和选择，之后缓存 `{ libraryUuid, uuid }`。
+- 电容库器件：通过 `lib_SelectControl.getSelectedLibraryRowInfo()` 读取嘉立创 EDA 底部原生器件库当前选中行，并分别缓存主电容与引脚去耦器件的 `{ libraryUuid, uuid }`。
 
-## 创建事务
+## 鼠标落位与创建事务
 
-一次生成包含：
+所有已选择电源域作为一个整批事务放置：
 
-1. 在每个被分配的芯片引脚坐标创建电源标签；
-2. 按规划坐标创建电容器件；
-3. 写入电容 `Value`；
-4. 读取新电容的两个引脚；
-5. 在 Pin 1 创建电源标签，在另一个引脚创建 GND 标签；
-6. 保存所有新图元 ID。
+1. 预先缓存当前图元 ID，并在用户点击“添加电容”的同步阶段立即调用 `placeComponentWithMouse()`，将整批首个电容黏到鼠标；
+2. 记录接口自身创建的跟随鼠标临时图元，轮询新增图元 ID 捕获用户真正点下的锚点电容；
+3. 调用客户端 `draw_end` 命令结束重复放置工具，清理临时跟随图元；
+4. 以首个落点为整批锚点，将所有已选择电源域按固定行距生成；每域上下母线独立，网络互不相连；
+5. 每域主电容排在左侧，逐引脚电容向右排列并写入 `Value`；取消主电容勾选时跳过该域主电容；
+6. 用一条水平导线连接本域全部电容上端，并在左侧放置电源标签；
+7. 所有电容下端通过竖直支路接入本域连续 GND 母线，每个电源域仅创建一个 GND 标识；
+8. 在芯片的所属电源引脚处放置同名电源标签；
+9. 重新读取客户端合并后的稳定导线 ID，分别保存器件 ID 和导线 ID。
 
 如果任一步失败，扩展使用已经收集的图元 ID 回滚本次创建内容。
 
@@ -91,14 +94,20 @@ interface GenerationBatch {
 	domains: Array<{
 		id: string;
 		label: string;
+		bankPowerLabelId: string;
+		groundFlagId: string;
+		groundFlagPoint: { x: number; y: number };
+		powerFlagPoint: { x: number; y: number };
 		powerLabelIds: string[];
+		wireIds: string[];
 		caps: Array<{
 			id: string;
 			kind: 'bulk' | 'pin';
 			pinNumber: string;
 			value: string;
 			componentId: string;
-			flagIds: string[];
+			groundPoint: { x: number; y: number };
+			powerPoint: { x: number; y: number };
 		}>;
 	}>;
 }
@@ -106,7 +115,7 @@ interface GenerationBatch {
 
 删除操作只使用 Manifest 中的图元 ID：
 
-- 删除电容：删除电容器件及其电源/GND标签；
+- 删除电容：删除电容器件，并按剩余电容坐标重建共享电源/GND 母线；删除最后一个电容时一并移除该生成域；
 - 删除电源域：删除该域芯片标签和全部电容；
 - 撤销整批：删除批次中的全部图元。
 
@@ -114,12 +123,15 @@ interface GenerationBatch {
 
 ## 布局策略
 
-- 主电容按电源域在芯片上方的左右侧阵列生成；
-- 引脚去耦根据引脚位于芯片中心的左侧或右侧，向外偏移生成；
-- 用户可强制统一生成在芯片左侧或右侧；
+- 用户只确定整批的一个锚点，所有已选择电源域按 `100` 坐标单位的固定行距依次向下排列；
+- 主电容排在阵列左侧，逐引脚去耦电容依次向右排列；
+- 电容统一竖直放置，顶部连接水平电源母线；
+- 底部用一条连续 GND 母线连接全部电容，只在母线一端放一个 GND 标识；
 - 所有坐标使用原理图单位 `0.01 inch`。
 
-首版不创建长导线，使用电源标签和 GND 标签连接，从而减少与已有图形交叉。
+嘉立创 EDA 原理图坐标的较大 Y 值对应屏幕上方；因此电源端选择较大 Y 引脚，GND 端选择较小 Y 引脚。
+
+官方鼠标接口只能预览一个库器件，因此跟随鼠标时显示锚点电容；整组阵列在用户点击后一次完成。
 
 ## 安全边界
 

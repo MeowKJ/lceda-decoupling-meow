@@ -4,7 +4,7 @@
 		<title>去耦喵</title>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<link rel="stylesheet" href="./styles.css" />
+		<link rel="stylesheet" href="/iframe/styles.css" />
 	</head>
 	<body>
 		<main class="app-shell">
@@ -61,37 +61,41 @@
 			<section class="panel generator-panel">
 				<div class="panel-heading">
 					<div>
-						<p class="section-kicker">STEP 3</p>
-						<h2>选择电容器件并生成</h2>
+					<p class="section-kicker">STEP 3</p>
+					<h2>选择两类电容器件并人工放置</h2>
 					</div>
 					<span class="read-only-chip">不会检查或删除原有器件</span>
 				</div>
 
 				<div class="generator-grid">
 					<div class="device-picker">
-						<label>电容库器件</label>
-						<div id="selectedDevice" class="selected-device">尚未选择</div>
-						<div class="device-search-row">
-							<input id="deviceSearchInput" type="search" value="100nF capacitor" placeholder="搜索电容器件" />
-							<button id="deviceSearchButton" class="secondary-button" type="button">搜索</button>
+						<label>嘉立创 EDA 原生器件库</label>
+						<p class="native-picker-help">先在编辑器底部器件库中搜索并点选器件，再回到这里读取；两个类别可使用不同符号和封装。</p>
+						<div class="device-slots">
+							<div class="device-slot">
+								<strong>主电容</strong>
+								<div class="selected-device" data-selected-device="bulk">尚未选择</div>
+								<button class="secondary-button" data-use-native-device="bulk" type="button">读取原生库当前器件</button>
+							</div>
+							<div class="device-slot">
+								<strong>引脚去耦</strong>
+								<div class="selected-device" data-selected-device="pin">尚未选择</div>
+								<button class="secondary-button" data-use-native-device="pin" type="button">读取原生库当前器件</button>
+							</div>
 						</div>
-						<select id="deviceResults" size="4" aria-label="电容器件搜索结果"></select>
 					</div>
 
 					<div class="placement-settings">
-						<label>生成位置</label>
-						<div class="segmented-control" role="group" aria-label="生成位置">
-							<button type="button" data-side="auto" class="active">自动</button>
-							<button type="button" data-side="right">芯片右侧</button>
-							<button type="button" data-side="left">芯片左侧</button>
-						</div>
+						<label>放置方式</label>
+						<div class="placement-preview"><span>公共电源母线</span><b>─┬─┬─┬─</b><small>电容竖排 · 公共 GND 母线 · 单个 GND 标志</small></div>
 						<div id="planSummary" class="plan-summary"></div>
-						<p class="placement-note">生成时会在芯片电源脚放置电源标签；电容使用同名电源标签和 GND 标签连接，不移动芯片。</p>
+						<p class="placement-note">点击一次“添加电容”，首个网络的锚点会跟随鼠标；落位后将所有已选择网络按独立行一次生成。</p>
 					</div>
 
 					<div class="generate-actions">
-						<button id="generateButton" class="primary-button" type="button">生成去耦电路</button>
-						<p>创建过程采用事务式回滚：任一步失败，本次已创建图元会自动删除。</p>
+						<strong>一次完成全部网络</strong>
+						<p>只需人工确定一个锚点，各电源网络会按行排列且彼此隔离；任一网络失败会回滚整批。</p>
+						<button id="placeAllButton" class="primary-button" type="button">添加电容</button>
 					</div>
 				</div>
 			</section>
@@ -120,6 +124,6 @@
 			</div>
 		</div>
 
-		<script type="module" src="./app.mjs"></script>
+		<script src="/dist/iframe.js"></script>
 	</body>
 </html>

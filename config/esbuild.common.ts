@@ -2,6 +2,7 @@ import type esbuild from 'esbuild';
 
 export default {
 	entryPoints: {
+		iframe: './iframe/app.mjs',
 		index: './src/index',
 	},
 	entryNames: '[name]',
