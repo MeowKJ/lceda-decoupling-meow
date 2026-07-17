@@ -5,6 +5,7 @@ const LEGACY_DEVICE_STORAGE_KEY = 'decouplingMeow.capacitorDevice.v1';
 const PREFERENCES_STORAGE_KEY = 'decouplingMeow.preferences.v1';
 const IFRAME_ID = 'lceda-decoupling-meow-window';
 const DEFAULT_CAP_VALUES = Object.freeze({ bulk: '4.7uF', pin: '100nF' });
+const SCHEMATIC_GRID_SIZE = 5;
 
 const POWER_PIN_PATTERNS = [
 	/^(?:VDD|VCC|AVDD|DVDD|PVDD|IOVDD|VDDIO|VCORE|VBAT|VREF|VIN|VIOIN|VINPA|VNWA|VOUT|VPP)[\w+-]*$/i,
@@ -1048,6 +1049,16 @@ export function isUniformlyTranslated(before, after, deltaX, deltaY, tolerance =
 	});
 }
 
+export function areCoordinatesOnGrid(coordinates, gridSize = SCHEMATIC_GRID_SIZE, tolerance = 0.001) {
+	if (!Number.isFinite(gridSize) || gridSize <= 0)
+		return false;
+	return (coordinates ?? []).every((coordinate) => {
+		const value = Number(coordinate);
+		return Number.isFinite(value)
+			&& Math.abs(value - Math.round(value / gridSize) * gridSize) <= tolerance;
+	});
+}
+
 async function captureStagedGeometry(componentIds, wireIds) {
 	const components = await globalThis.eda.sch_PrimitiveComponent.get(componentIds);
 	const wires = wireIds.length
@@ -1336,6 +1347,21 @@ async function validateStagedDomainPlacement(staged, domain) {
 		throw new Error(`电源标签校验失败：预期 ${domain.label}。`);
 	if (groundFlag?.getState_Net?.() !== 'GND')
 		throw new Error('GND 标签校验失败。');
+	const flagCoordinates = [
+		powerFlag?.getState_X?.(),
+		powerFlag?.getState_Y?.(),
+		groundFlag?.getState_X?.(),
+		groundFlag?.getState_Y?.(),
+	];
+	if (!areCoordinatesOnGrid(flagCoordinates))
+		throw new Error('电源或 GND 标签未对齐原理图网格。');
+
+	for (const primitiveId of staged.capacitorIds) {
+		const pins = await globalThis.eda.sch_PrimitiveComponent.getAllPinsByPrimitiveId(primitiveId);
+		const coordinates = pins.flatMap(pin => [pin.getState_X(), pin.getState_Y()]);
+		if (!areCoordinatesOnGrid(coordinates))
+			throw new Error(`电容 ${componentMap.get(primitiveId)?.getState_Designator?.() || primitiveId} 的引脚未对齐原理图网格。`);
+	}
 
 	const wires = staged.created.wireIds.length
 		? await globalThis.eda.sch_PrimitiveWire.get(staged.created.wireIds)
@@ -1347,6 +1373,8 @@ async function validateStagedDomainPlacement(staged, domain) {
 			throw new Error(`落位校验缺少导线 ${primitiveId}。`);
 		if (!isUniformlyTranslated(before, lineCoordinates(wire.getState_Line()), deltaX, deltaY))
 			throw new Error(`导线 ${primitiveId} 未随整组同步移动。`);
+		if (!areCoordinatesOnGrid(lineCoordinates(wire.getState_Line())))
+			throw new Error(`导线 ${primitiveId} 的顶点未对齐原理图网格。`);
 	}
 	if (wires.length) {
 		const nets = new Set(wires.map(wire => wire.getState_Net?.()).filter(Boolean));
@@ -1441,6 +1469,8 @@ async function placeDomainsAsMovedGroups(mouseEvent) {
 				placementWaiter = null;
 				await sleep(250);
 				await waitForStagedGroupMove(staged);
+				await runtime.doCommand('align_grid');
+				await sleep(250);
 				await validateStagedDomainPlacement(staged, domain);
 				completedDomains += 1;
 				completedCaps += staged.capCount;

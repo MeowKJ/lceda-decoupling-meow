@@ -20,7 +20,6 @@
 /package-lock.json
 /package.json
 /tsconfig.json
-/CHANGELOG.md
 /images/logo.svg
 .eslintcache
 debug.log

@@ -18,3 +18,57 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+
+  release:
+    name: Publish extension release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Read release metadata
+        id: metadata
+        shell: bash
+        run: |
+          version="$(node -p "require('./extension.json').version")"
+          name="$(node -p "require('./extension.json').name")"
+          asset="build/dist/${name}_v${version}.eext"
+          test -f "$asset"
+          sha256sum "$asset" > "${asset}.sha256"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          ASSET: ${{ steps.metadata.outputs.asset }}
+        shell: bash
+        run: |
+          if git rev-parse --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+            tag_commit="$(git rev-list -n 1 "$TAG")"
+            if [ "$tag_commit" != "$GITHUB_SHA" ]; then
+              echo "::error::Release $TAG already points to $tag_commit. Bump extension.json and package.json before publishing another main commit."
+              exit 1
+            fi
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists for this commit; nothing to publish."
+            exit 0
+          fi
+          gh release create "$TAG" "$ASSET" "${ASSET}.sha256" \
+            --target "$GITHUB_SHA" \
+            --title "去耦喵 v$VERSION" \
+            --generate-notes \
+            --latest

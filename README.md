@@ -1,8 +1,6 @@
 # 去耦喵（lceda-decoupling-meow）
 
-<p align="center">
-  <img src="./images/logo.png" width="112" alt="去耦喵图标" />
-</p>
+![去耦喵图标](./images/logo.png)
 
 [![CI](https://github.com/MeowKJ/lceda-decoupling-meow/actions/workflows/ci.yml/badge.svg)](https://github.com/MeowKJ/lceda-decoupling-meow/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
@@ -11,11 +9,9 @@
 
 自动识别只是建议。用户可以选择任意引脚、新建或删除电源域、拆分或合并引脚归属，并为每个电源域单独增删电容。
 
-<p align="center">
-  <img src="./images/generated-groups.png" width="520" alt="去耦喵在嘉立创 EDA 中生成两组独立去耦网络" />
-</p>
+![去耦喵在嘉立创 EDA 中生成两组独立去耦网络](./images/generated-groups.png)
 
-<p align="center"><sub>真实编辑器结果：每个电源域独立整块落位，共享连续电源/GND 母线。</sub></p>
+真实编辑器结果：每个电源域独立整块落位，共享连续电源/GND 母线。
 
 ## 功能
 
@@ -66,7 +62,7 @@ npm run check
 生成的扩展包位于：
 
 ```text
-build/dist/lceda-decoupling-meow_v0.9.4.eext
+build/dist/lceda-decoupling-meow_v0.9.5.eext
 ```
 
 在嘉立创 EDA 专业版 V3 中进入“高级 → 扩展管理器 → 导入”，选择 `.eext` 文件。导入后切换到“已安装”，选择“去耦喵 → 配置”，勾选“显示在顶部菜单”；否则入口只会收纳在“高级 → 去耦喵”子菜单中。

@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import {
 	allocateCapacitorDesignators,
+	areCoordinatesOnGrid,
 	buildBankPlan,
 	buildInitialDomains,
 	buildPersistentPreferences,
@@ -26,6 +27,13 @@ import {
 	suggestPowerLabel,
 	validateDomains,
 } from '../iframe/app.mjs';
+
+test('requires every electrical vertex to land on the 0.05 inch schematic grid', () => {
+	assert.equal(areCoordinatesOnGrid([0, 5, 10, -15, 20]), true);
+	assert.equal(areCoordinatesOnGrid([0, 5, 10.5, 15]), false);
+	assert.equal(areCoordinatesOnGrid([0, Number.NaN]), false);
+	assert.equal(areCoordinatesOnGrid([0, 10], 0), false);
+});
 
 test('persists independent main and bypass device habits in one versioned snapshot', () => {
 	const preferences = buildPersistentPreferences({

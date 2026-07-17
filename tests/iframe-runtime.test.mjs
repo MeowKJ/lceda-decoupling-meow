@@ -17,6 +17,14 @@ test('supports native whole-group move with anchor fallback', async () => {
 	assert.ok(hideWindow > placement);
 	assert.match(bundle, /doCommand\(['"]draw_end['"]\)/);
 	assert.match(source, /doCommand\('MOVE_BY_CENTER_POINT'\)/);
+	assert.match(source, /doCommand\('align_grid'\)/);
+	const wholeGroupPlacement = source.indexOf('async function placeDomainsAsMovedGroups');
+	const alignToGrid = source.indexOf('doCommand(\'align_grid\')', wholeGroupPlacement);
+	const placementValidation = source.indexOf('await validateStagedDomainPlacement(staged, domain)', alignToGrid);
+	assert.ok(wholeGroupPlacement >= 0);
+	assert.ok(alignToGrid > wholeGroupPlacement);
+	assert.ok(placementValidation > alignToGrid);
+	assert.match(source, /areCoordinatesOnGrid/);
 	assert.match(source, /createCanvasPlacementWaiter/);
 	assert.match(source, /createStagedDomainGroup/);
 	assert.ok(source.indexOf('clearSelected()') < source.indexOf('doSelectPrimitives(ids)'));
