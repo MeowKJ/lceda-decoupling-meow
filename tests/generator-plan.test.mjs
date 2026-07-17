@@ -129,7 +129,9 @@ test('recognizes POWER typed and conventionally named pins', () => {
 test('prefers an explicit existing net and never guesses a generic VDD voltage', () => {
 	assert.equal(suggestPowerLabel(pin(1, 'VDD', { net: '+3V3' })), '+3V3');
 	assert.equal(suggestPowerLabel(pin(2, 'VDD')), 'VDD');
-	assert.equal(suggestPowerLabel(pin(3, 'VDD_3V3')), '+3V3');
+	assert.equal(suggestPowerLabel(pin(3, 'VDD_3V3')), 'VDD_3V3');
+	assert.equal(suggestPowerLabel(pin(4, 'VDD33')), 'VDD33');
+	assert.equal(suggestPowerLabel(pin(5, 'AVDD-1V8')), 'AVDD-1V8');
 });
 
 test('creates separate initial domains for different power labels', () => {

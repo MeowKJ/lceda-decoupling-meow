@@ -60,22 +60,11 @@ export function isPowerCandidate(pin) {
 		&& (pin?.isPowerType === true || POWER_PIN_PATTERNS.some(pattern => pattern.test(name)));
 }
 
-function explicitVoltageLabel(name) {
-	const normalized = normalizeName(name).toUpperCase();
-	const match = normalized.match(/(?:VDD|VCC|AVDD|DVDD|IOVDD|VDDIO)[_-]?(\d)V?(\d)$/);
-	if (!match)
-		return '';
-	return `+${match[1]}V${match[2]}`;
-}
-
 export function suggestPowerLabel(pin) {
 	const existingNet = String(pin?.net ?? '').trim();
 	if (existingNet && !existingNet.startsWith('$'))
 		return existingNet;
-	const voltage = explicitVoltageLabel(pin?.name);
-	if (voltage)
-		return voltage;
-	return normalizeName(pin?.name) || 'VDD';
+	return String(pin?.name ?? '').trim() || 'VDD';
 }
 
 function createCap(value, kind, pinNumber = '') {
