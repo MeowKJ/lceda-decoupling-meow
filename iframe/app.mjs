@@ -1247,7 +1247,7 @@ export function findUnexpectedSelectionIds(selectedIds, allowedIds) {
 }
 
 function createCanvasPlacementWaiter(timeoutMs = 120000) {
-	const target = globalThis.parent ?? globalThis;
+	const targets = [...new Set([globalThis, globalThis.parent].filter(Boolean))];
 	let armed = false;
 	let settled = false;
 	let timeoutId;
@@ -1256,8 +1256,10 @@ function createCanvasPlacementWaiter(timeoutMs = 120000) {
 	let onMouseUp;
 	let onKeyDown;
 	const cleanup = () => {
-		target.removeEventListener('mouseup', onMouseUp, true);
-		target.removeEventListener('keydown', onKeyDown, true);
+		for (const target of targets) {
+			target.removeEventListener('mouseup', onMouseUp, true);
+			target.removeEventListener('keydown', onKeyDown, true);
+		}
 		if (timeoutId)
 			clearTimeout(timeoutId);
 	};
@@ -1273,14 +1275,19 @@ function createCanvasPlacementWaiter(timeoutMs = 120000) {
 			finish(resolvePromise, { x: event.clientX, y: event.clientY });
 	};
 	onKeyDown = (event) => {
-		if (event.key === 'Escape')
-			finish(rejectPromise, new Error('已取消当前整组放置。'));
+		if (event.key === 'Escape') {
+			const error = new Error('已取消当前整组放置。');
+			error.code = 'PLACEMENT_CANCELLED';
+			finish(rejectPromise, error);
+		}
 	};
 	const promise = new Promise((resolve, reject) => {
 		resolvePromise = resolve;
 		rejectPromise = reject;
-		target.addEventListener('mouseup', onMouseUp, true);
-		target.addEventListener('keydown', onKeyDown, true);
+		for (const target of targets) {
+			target.addEventListener('mouseup', onMouseUp, true);
+			target.addEventListener('keydown', onKeyDown, true);
+		}
 		timeoutId = setTimeout(() => {
 			finish(reject, new Error('等待整组落位超时。'));
 		}, timeoutMs);
@@ -1297,6 +1304,10 @@ function createCanvasPlacementWaiter(timeoutMs = 120000) {
 		},
 		promise,
 	};
+}
+
+function isPlacementCancelled(error) {
+	return error?.code === 'PLACEMENT_CANCELLED';
 }
 
 async function waitForStagedGroupMove(staged, timeoutMs = 5000) {
@@ -1356,8 +1367,13 @@ async function validateStagedDomainPlacement(staged, domain) {
 	if (!areCoordinatesOnGrid(flagCoordinates))
 		throw new Error('电源或 GND 标签未对齐原理图网格。');
 
-	for (const primitiveId of staged.capacitorIds) {
-		const pins = await globalThis.eda.sch_PrimitiveComponent.getAllPinsByPrimitiveId(primitiveId);
+	const capacitorPins = await Promise.all(staged.capacitorIds.map(async (primitiveId) => {
+		return {
+			pins: await globalThis.eda.sch_PrimitiveComponent.getAllPinsByPrimitiveId(primitiveId),
+			primitiveId,
+		};
+	}));
+	for (const { pins, primitiveId } of capacitorPins) {
 		const coordinates = pins.flatMap(pin => [pin.getState_X(), pin.getState_Y()]);
 		if (!areCoordinatesOnGrid(coordinates))
 			throw new Error(`电容 ${componentMap.get(primitiveId)?.getState_Designator?.() || primitiveId} 的引脚未对齐原理图网格。`);
@@ -1460,24 +1476,25 @@ async function placeDomainsAsMovedGroups(mouseEvent) {
 				placementWaiter = createCanvasPlacementWaiter();
 				await runtime.doCommand('MOVE_BY_CENTER_POINT');
 				placementWaiter.arm();
-				await EDA.sys_Message.showFollowMouseTip(`第 ${index + 1}/${domains.length} 组：点击整块放置 ${domain.label}`);
+				await EDA.sys_Message.showFollowMouseTip(`第 ${index + 1}/${domains.length} 组：点击整块放置 ${domain.label} · Esc 取消`);
 				if (!windowHidden) {
 					await EDA.sys_IFrame.hideIFrame(IFRAME_ID);
 					windowHidden = true;
 				}
 				await placementWaiter.promise;
 				placementWaiter = null;
-				await sleep(250);
 				await waitForStagedGroupMove(staged);
 				await runtime.doCommand('align_grid');
-				await sleep(250);
 				await validateStagedDomainPlacement(staged, domain);
 				completedDomains += 1;
 				completedCaps += staged.capCount;
-				await refreshPrimitiveIdsSnapshot();
 			}
 			catch (error) {
 				placementWaiter?.cancel();
+				if (isPlacementCancelled(error)) {
+					await clearFollowMouseTip();
+					await EDA.sys_Message.showToastMessage('已取消，正在清理当前未完成的电容组。');
+				}
 				try {
 					await runtime.doCommand('draw_end');
 				}
@@ -1490,14 +1507,19 @@ async function placeDomainsAsMovedGroups(mouseEvent) {
 				const cleanupMessage = rollbackFailures.length
 					? ` 当前组回滚仍有 ${rollbackFailures.length} 项失败。`
 					: '';
-				throw new Error(`${error instanceof Error ? error.message : String(error)}${cleanupMessage}`);
+				const failure = new Error(`${error instanceof Error ? error.message : String(error)}${cleanupMessage}`);
+				failure.code = error?.code;
+				throw failure;
 			}
 		}
 		setSuccess(`已整块放置并校验 ${completedDomains} 个电源网络、${completedCaps} 个电容。`);
 	}
 	catch (error) {
 		const progress = completedDomains > 0 ? `已完成 ${completedDomains}/${domains.length} 组。` : '';
-		setError(`${progress}${error instanceof Error ? error.message : String(error)}`);
+		const message = `${progress}${error instanceof Error ? error.message : String(error)}`;
+		if (isPlacementCancelled(error))
+			setSuccess(`${message} 当前未完成的组已清理。`);
+		else setError(message);
 	}
 	finally {
 		state.placementPending = false;

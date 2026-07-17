@@ -26,6 +26,11 @@ test('supports native whole-group move with anchor fallback', async () => {
 	assert.ok(placementValidation > alignToGrid);
 	assert.match(source, /areCoordinatesOnGrid/);
 	assert.match(source, /createCanvasPlacementWaiter/);
+	assert.match(source, /PLACEMENT_CANCELLED/);
+	assert.match(source, /Esc 取消/);
+	assert.match(source, /当前未完成的组已清理/);
+	assert.doesNotMatch(source, /await sleep\(250\)/);
+	assert.match(source, /Promise\.all\(staged\.capacitorIds\.map/);
 	assert.match(source, /createStagedDomainGroup/);
 	assert.ok(source.indexOf('clearSelected()') < source.indexOf('doSelectPrimitives(ids)'));
 	assert.match(source, /nextCapacitorDesignators/);
