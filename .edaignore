@@ -21,6 +21,7 @@
 /package.json
 /tsconfig.json
 /images/logo.svg
+/images/usage-demo.gif
 .eslintcache
 debug.log
 .DS_Store
