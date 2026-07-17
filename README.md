@@ -79,7 +79,7 @@ npm run check
 生成的扩展包位于：
 
 ```text
-build/dist/lceda-decoupling-meow_v0.9.18.eext
+build/dist/lceda-decoupling-meow_v0.9.19.eext
 ```
 
 在嘉立创 EDA 专业版 V3 中进入“高级 → 扩展管理器 → 导入”，选择 `.eext` 文件。导入后切换到“已安装”，选择“原理图自动去耦喵 → 配置”，勾选“显示在顶部菜单”；否则入口只会收纳在“高级 → 原理图自动去耦喵”子菜单中。
