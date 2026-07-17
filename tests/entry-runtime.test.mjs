@@ -96,7 +96,7 @@ test('adds one native schematic context-menu action for a single component', asy
 	bus.rpcReply({ part: [{ cmd: 'copy', text: 'Copy' }, 'menu-sep', { cmd: 'delete', text: 'Delete' }] }, '_MSG_BUS_RPC_-menuData-test');
 
 	const menu = replies[0][0].part;
-	const itemIndex = menu.findIndex(item => typeof item === 'object' && item?.text === '去耦喵');
+	const itemIndex = menu.findIndex(item => typeof item === 'object' && item?.text === '原理图自动去耦喵');
 	assert.equal(itemIndex, 2);
 	assert.equal(menu[itemIndex].submenu[0].text, '生成去耦');
 	assert.equal(menu[itemIndex].submenu[0].cmd, 'runRegisteredExtensionFn(7f342549d32b4cbca363f63d3b5b734d.generateForSelectedComponent)');

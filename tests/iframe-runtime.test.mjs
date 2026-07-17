@@ -8,6 +8,8 @@ test('supports native whole-group move with anchor fallback', async () => {
 	const source = await readFile(new URL('../iframe/app.mjs', import.meta.url), 'utf8');
 	const html = await readFile(new URL('../iframe/index.html', import.meta.url), 'utf8');
 	const css = await readFile(new URL('../iframe/styles.css', import.meta.url), 'utf8');
+	const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
+	const workflow = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
 	const placement = bundle.indexOf('placeComponentWithMouse');
 	const followTip = bundle.indexOf('showFollowMouseTip', placement);
 	const hideWindow = bundle.indexOf('hideIFrame', placement);
@@ -83,4 +85,7 @@ test('supports native whole-group move with anchor fallback', async () => {
 	assert.match(source, /整块放置 \$\{summary\.domains\} 个电源域/);
 	assert.match(source, /第 \$\{index \+ 1\}\/\$\{domains\.length\} 组/);
 	assert.match(source, /await sleep\(20\)/);
+	assert.match(readme, /!\[原理图自动去耦喵操作演示\]\(\.\/images\/usage-demo\.gif\)/);
+	assert.doesNotMatch(readme, /data:image|;base64,/i);
+	assert.match(workflow, /gh release create[^\n]*images\/usage-demo\.gif/);
 });

@@ -1,9 +1,9 @@
 {
 	"name": "lceda-decoupling-meow",
 	"uuid": "7f342549d32b4cbca363f63d3b5b734d",
-	"displayName": "去耦喵",
+	"displayName": "原理图自动去耦喵",
 	"description": "识别选中芯片的多个电源网络，将主电容、去耦电容、标签与母线作为完整图元组随鼠标整块放置。",
-	"version": "0.9.11",
+	"version": "0.9.12",
 	"publisher": "MeowKJ",
 	"engines": {
 		"eda": "^3.0.0"
@@ -35,7 +35,7 @@
 		"sch": [
 			{
 				"id": "lceda-decoupling-meow-menu",
-				"title": "去耦喵",
+				"title": "原理图自动去耦喵",
 				"menuItems": [
 					{
 						"id": "lceda-decoupling-meow-generate",
@@ -44,7 +44,7 @@
 					},
 					{
 						"id": "lceda-decoupling-meow-about",
-						"title": "关于去耦喵",
+						"title": "关于原理图自动去耦喵",
 						"registerFn": "about"
 					}
 				]

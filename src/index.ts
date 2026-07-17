@@ -11,7 +11,7 @@ const IFRAME_ID = 'lceda-decoupling-meow-window';
 const CONTEXT_MENU_HOOK_KEY = '__lcedaDecouplingMeowContextMenuHook';
 const CONTEXT_MENU_TIMER_KEY = '__lcedaDecouplingMeowContextMenuTimer';
 const CONTEXT_MENU_COMMAND = `runRegisteredExtensionFn(${extensionConfig.uuid}.generateForSelectedComponent)`;
-const CONTEXT_MENU_TITLE = '去耦喵';
+const CONTEXT_MENU_TITLE = extensionConfig.displayName;
 const CONTEXT_MENU_GENERATE_TITLE = '生成去耦';
 const CONTEXT_MENU_RETRY_MS = 1000;
 
@@ -307,7 +307,7 @@ export async function generateForSelectedComponent(): Promise<void> {
 			maximizeButton: true,
 			minimizeButton: true,
 			minimizeStyle: 'collapsed',
-			title: `去耦喵 · ${input.selected.designator}`,
+			title: `${extensionConfig.displayName} · ${input.selected.designator}`,
 		});
 
 		if (!opened) {
@@ -317,13 +317,13 @@ export async function generateForSelectedComponent(): Promise<void> {
 	}
 	catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		eda.sys_Dialog.showInformationMessage(message, '去耦喵');
+		eda.sys_Dialog.showInformationMessage(message, extensionConfig.displayName);
 	}
 }
 
 export function about(): void {
 	eda.sys_Dialog.showInformationMessage(
-		`去耦喵 v${extensionConfig.version}\n\n识别选中芯片的多个电源域，将电容、标签与连接母线作为完整图元组随鼠标整块放置，不修改芯片本体或已有去耦。`,
-		'关于去耦喵',
+		`${extensionConfig.displayName} v${extensionConfig.version}\n\n识别选中芯片的多个电源域，将电容、标签与连接母线作为完整图元组随鼠标整块放置，不修改芯片本体或已有去耦。`,
+		`关于${extensionConfig.displayName}`,
 	);
 }

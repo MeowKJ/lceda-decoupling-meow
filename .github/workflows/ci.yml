@@ -44,6 +44,7 @@ jobs:
           name="$(node -p "require('./extension.json').name")"
           asset="build/dist/${name}_v${version}.eext"
           test -f "$asset"
+          test -f "images/usage-demo.gif"
           asset_dir="$(dirname "$asset")"
           asset_name="$(basename "$asset")"
           (cd "$asset_dir" && sha256sum "$asset_name" > "${asset_name}.sha256")
@@ -69,8 +70,8 @@ jobs:
             echo "Release $TAG already exists for this commit; nothing to publish."
             exit 0
           fi
-          gh release create "$TAG" "$ASSET" "${ASSET}.sha256" \
+          gh release create "$TAG" "$ASSET" "${ASSET}.sha256" "images/usage-demo.gif" \
             --target "$GITHUB_SHA" \
-            --title "去耦喵 v$VERSION" \
+            --title "原理图自动去耦喵 v$VERSION" \
             --generate-notes \
             --latest
