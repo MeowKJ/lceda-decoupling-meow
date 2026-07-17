@@ -3,14 +3,17 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+	allocateCapacitorDesignators,
 	buildBankPlan,
 	buildInitialDomains,
 	buildSharedBusPlan,
 	extractDeviceCapacitance,
+	findUnexpectedSelectionIds,
 	getExtraPlacementAnchorIds,
 	isDrawableWireLine,
 	isGroundPinName,
 	isPowerCandidate,
+	isUniformlyTranslated,
 	mapConcurrent,
 	matchesLibraryDevice,
 	normalizeCapacitanceValue,
@@ -21,6 +24,19 @@ import {
 	suggestPowerLabel,
 	validateDomains,
 } from '../iframe/app.mjs';
+
+test('allocates stable capacitor designators after the highest existing C number', () => {
+	assert.deepEqual(
+		allocateCapacitorDesignators(['R8', 'C97', 'c12', 'C?', undefined], 4),
+		['C98', 'C99', 'C100', 'C101'],
+	);
+});
+
+test('validates one uniform translation for components and polyline wires', () => {
+	assert.equal(isUniformlyTranslated([10, 20], [110, -30], 100, -50), true);
+	assert.equal(isUniformlyTranslated([10, 20, 30, 40], [110, -30, 130, -10], 100, -50), true);
+	assert.equal(isUniformlyTranslated([10, 20, 30, 40], [110, -30, 131, -10], 100, -50), false);
+});
 
 function pin(number, name, overrides = {}) {
 	return {
@@ -114,6 +130,13 @@ test('keeps one settled anchor and marks repeated mouse placements for cleanup',
 	}));
 
 	assert.deepEqual(getExtraPlacementAnchorIds(components, 'C97'), ['C98', 'C99']);
+});
+
+test('blocks whole-group movement when selection expands to existing page primitives', () => {
+	assert.deepEqual(
+		findUnexpectedSelectionIds(['cap-1', 'wire-1', 'existing-gnd'], ['cap-1', 'wire-1']),
+		['existing-gnd'],
+	);
 });
 
 test('orders bulk capacitors before per-pin capacitors in a connected bank', () => {

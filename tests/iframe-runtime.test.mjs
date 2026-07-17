@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-test('invokes mouse placement before asynchronous UI work', async () => {
+test('supports native whole-group move with anchor fallback', async () => {
 	const bundle = await readFile(new URL('../dist/iframe.js', import.meta.url), 'utf8');
 	const source = await readFile(new URL('../iframe/app.mjs', import.meta.url), 'utf8');
 	const html = await readFile(new URL('../iframe/index.html', import.meta.url), 'utf8');
@@ -16,6 +16,16 @@ test('invokes mouse placement before asynchronous UI work', async () => {
 	assert.ok(followTip > placement);
 	assert.ok(hideWindow > placement);
 	assert.match(bundle, /doCommand\(['"]draw_end['"]\)/);
+	assert.match(source, /doCommand\('MOVE_BY_CENTER_POINT'\)/);
+	assert.match(source, /createCanvasPlacementWaiter/);
+	assert.match(source, /createStagedDomainGroup/);
+	assert.ok(source.indexOf('clearSelected()') < source.indexOf('doSelectPrimitives(ids)'));
+	assert.match(source, /nextCapacitorDesignators/);
+	assert.match(source, /validateStagedDomainPlacement/);
+	assert.match(source, /已整块放置并校验/);
+	assert.doesNotMatch(source, /restoreStagedNetLabels|setState_Net\(/);
+	assert.doesNotMatch(source, /\\u2063/);
+	assert.doesNotMatch(source, /doCommand\('cut'\)|doCommand\('paste'\)/);
 	assert.match(bundle, /getSelectedLibraryRowInfo/);
 	assert.match(bundle, /openBottomPanel/);
 	assert.match(bundle, /ESYS_BottomPanelTab/);
@@ -50,7 +60,7 @@ test('invokes mouse placement before asynchronous UI work', async () => {
 	assert.doesNotMatch(source, /createPowerFlag\(domain\.label, pin\.x, pin\.y\)/);
 	assert.doesNotMatch(source, /MANIFESTS_STORAGE_KEY|state\.manifests|替换现有去耦/);
 	assert.match(source, /本次 \$\{totalCaps\} 颗/);
-	assert.match(source, /逐组放置 \$\{summary\.domains\} 个电源域/);
+	assert.match(source, /整块放置 \$\{summary\.domains\} 个电源域/);
 	assert.match(source, /第 \$\{index \+ 1\}\/\$\{domains\.length\} 组/);
 	assert.match(source, /await sleep\(20\)/);
 });

@@ -449,8 +449,8 @@ function renderPlanSummary() {
 	document.querySelector('#componentBadge').innerHTML = `<strong>${escapeHtml(state.input?.selected?.designator || '芯片')}</strong><span>${summary.domains} 个电源域 · ${summary.labels} 个电源脚</span>`;
 	document.querySelector('#placementSummary').textContent = `本次 ${totalCaps} 颗`;
 	document.querySelector('#placeAllButton').textContent = summary.domains > 0
-		? `逐组放置 ${summary.domains} 个电源域`
-		: '逐组放置';
+		? `整块放置 ${summary.domains} 个电源域`
+		: '整块放置';
 }
 
 function renderAll() {
@@ -627,6 +627,25 @@ export function buildBankPlan(domain) {
 	return [...bulkCaps, ...pinCaps];
 }
 
+export function allocateCapacitorDesignators(existingDesignators, count) {
+	const highest = (existingDesignators ?? []).reduce((maximum, designator) => {
+		const match = /^C(\d+)$/i.exec(String(designator ?? '').trim());
+		return match ? Math.max(maximum, Number(match[1])) : maximum;
+	}, 0);
+	return Array.from({ length: Math.max(0, Number(count) || 0) }, (_, index) => `C${highest + index + 1}`);
+}
+
+async function nextCapacitorDesignators(count) {
+	const ids = await globalThis.eda.sch_PrimitiveComponent.getAllPrimitiveId();
+	const components = ids.length
+		? await globalThis.eda.sch_PrimitiveComponent.get(ids)
+		: [];
+	return allocateCapacitorDesignators(
+		components.map(component => component.getState_Designator?.()),
+		count,
+	);
+}
+
 function primitiveIdOf(primitive) {
 	const id = primitive?.getState_PrimitiveId?.();
 	if (!id)
@@ -641,8 +660,8 @@ async function createPowerFlag(net, x, y) {
 	return primitiveIdOf(flag);
 }
 
-async function createGroundFlag(x, y) {
-	const flag = await globalThis.eda.sch_PrimitiveComponent.createNetFlag('Ground', 'GND', x, y);
+async function createGroundFlag(x, y, net = 'GND') {
+	const flag = await globalThis.eda.sch_PrimitiveComponent.createNetFlag('Ground', net, x, y);
 	if (!flag)
 		throw new Error('创建 GND 标签失败。');
 	return primitiveIdOf(flag);
@@ -726,7 +745,7 @@ export async function mapConcurrent(items, limit, worker) {
 	return results;
 }
 
-async function createCapacitorAt(cap, x, y, created) {
+async function createCapacitorAt(cap, x, y, created, designator) {
 	const device = deviceForCap(cap);
 	if (!device)
 		throw new Error(`${deviceKindLabel(cap.kind)}尚未选择器件。`);
@@ -744,16 +763,23 @@ async function createCapacitorAt(cap, x, y, created) {
 		throw new Error(`创建 ${cap.value} 电容失败。`);
 	const componentId = primitiveIdOf(component);
 	created.componentIds.push(componentId);
-	return await prepareCapacitor(component, cap);
+	return await prepareCapacitor(component, cap, designator);
 }
 
-async function prepareCapacitor(component, cap) {
+async function prepareCapacitor(component, cap, designator) {
 	const componentId = primitiveIdOf(component);
 	const x = component.getState_X();
 	const y = component.getState_Y();
-	const rotated = await globalThis.eda.sch_PrimitiveComponent.modify(componentId, { rotation: 90, x, y });
+	const rotated = await globalThis.eda.sch_PrimitiveComponent.modify(componentId, {
+		rotation: 90,
+		x,
+		y,
+		...(designator ? { designator } : {}),
+	});
 	if (!rotated)
 		throw new Error(`旋转 ${cap.value} 电容失败。`);
+	if (designator && rotated.getState_Designator?.() !== designator)
+		throw new Error(`电容位号未能设置为 ${designator}。`);
 	await setCapacitorValue(rotated, cap.value);
 	await shiftCapacitorTextLeft(componentId, cap.value);
 	const pins = await globalThis.eda.sch_PrimitiveComponent.getAllPinsByPrimitiveId(componentId);
@@ -927,10 +953,10 @@ function domainPlacementErrors(domain) {
 	return errors;
 }
 
-async function generateDomainBank(domain, preparedAnchor, anchorX, anchorY, created) {
+async function generateDomainBank(domain, preparedAnchor, anchorX, anchorY, created, remainingDesignators = []) {
 	const caps = buildBankPlan(domain);
 	const remaining = await mapConcurrent(caps.slice(1), 3, (cap, index) => {
-		return createCapacitorAt(cap, anchorX + (index + 1) * 40, anchorY, created);
+		return createCapacitorAt(cap, anchorX + (index + 1) * 40, anchorY, created, remainingDesignators[index]);
 	});
 	const placedCaps = [preparedAnchor, ...remaining];
 	const busPlan = buildSharedBusPlan(placedCaps.map(placed => ({
@@ -944,6 +970,81 @@ async function generateDomainBank(domain, preparedAnchor, anchorX, anchorY, crea
 	const groundFlagId = await createGroundFlag(busPlan.ground.flag.x, busPlan.ground.flag.y);
 	created.componentIds.push(groundFlagId);
 	await createConnectedBankWires(busPlan.power, busPlan.ground, created);
+	return {
+		capacitorIds: placedCaps.map(placed => placed.componentId),
+		groundFlagId,
+		powerFlagId,
+	};
+}
+
+function componentGeometry(component) {
+	return {
+		x: Number(component.getState_X()),
+		y: Number(component.getState_Y()),
+	};
+}
+
+function lineCoordinates(line) {
+	return (Array.isArray(line?.[0]) ? line.flat() : [...(line ?? [])]).map(Number);
+}
+
+export function isUniformlyTranslated(before, after, deltaX, deltaY, tolerance = 0.001) {
+	if (!Array.isArray(before) || !Array.isArray(after) || before.length !== after.length)
+		return false;
+	return before.every((value, index) => {
+		const delta = index % 2 === 0 ? deltaX : deltaY;
+		return Math.abs((Number(value) + delta) - Number(after[index])) <= tolerance;
+	});
+}
+
+async function captureStagedGeometry(componentIds, wireIds) {
+	const components = await globalThis.eda.sch_PrimitiveComponent.get(componentIds);
+	const wires = wireIds.length
+		? await globalThis.eda.sch_PrimitiveWire.get(wireIds)
+		: [];
+	return {
+		components: Object.fromEntries(components.map(component => [
+			primitiveIdOf(component),
+			componentGeometry(component),
+		])),
+		wires: Object.fromEntries(wires.map(wire => [
+			primitiveIdOf(wire),
+			lineCoordinates(wire.getState_Line()),
+		])),
+	};
+}
+
+async function createStagedDomainGroup(domain, x = -20000, y = -20000) {
+	const created = {
+		componentIds: [],
+		wireBaseline: new Set(await globalThis.eda.sch_PrimitiveWire.getAllPrimitiveId()),
+		wireIds: [],
+	};
+	try {
+		const caps = buildBankPlan(domain);
+		const designators = await nextCapacitorDesignators(caps.length);
+		const anchor = await createCapacitorAt(caps[0], x, y, created, designators[0]);
+		const flags = await generateDomainBank(domain, anchor, x, y, created, designators.slice(1));
+		created.wireIds = (await globalThis.eda.sch_PrimitiveWire.getAllPrimitiveId())
+			.filter(id => !created.wireBaseline.has(id));
+		const geometry = await captureStagedGeometry(created.componentIds, created.wireIds);
+		return {
+			capCount: caps.length,
+			capacitorIds: flags.capacitorIds,
+			created,
+			designators,
+			flags,
+			geometry,
+			origin: { x, y },
+		};
+	}
+	catch (error) {
+		const rollbackFailures = await rollback(created);
+		const suffix = rollbackFailures.length
+			? ` 临时组回滚仍有 ${rollbackFailures.length} 项失败。`
+			: '';
+		throw new Error(`${error instanceof Error ? error.message : String(error)}${suffix}`);
+	}
 }
 
 async function finalizeDomainPlacement(domain, anchorComponent) {
@@ -1050,6 +1151,159 @@ async function finishMousePlacementTool() {
 	await sleep(50);
 }
 
+function getSchematicRuntime() {
+	const runtime = globalThis.parent?.SCH ?? globalThis.SCH;
+	if (typeof runtime?.doCommand !== 'function')
+		throw new Error('当前客户端没有提供整组移动命令。');
+	return runtime;
+}
+
+async function selectStagedDomainGroup(staged) {
+	const selectControl = globalThis.eda.sch_SelectControl;
+	const cleared = selectControl.clearSelected();
+	if (cleared === false)
+		throw new Error('清除芯片原有选择失败，已中止整组移动。');
+	const lingeringIds = await selectControl.getAllSelectedPrimitives_PrimitiveId();
+	if (lingeringIds.length)
+		throw new Error(`清除芯片原有选择后仍残留 ${lingeringIds.length} 个图元，已中止整组移动。`);
+	const ids = [...new Set([
+		...staged.created.componentIds,
+		...staged.created.wireIds,
+	])];
+	const selected = await selectControl.doSelectPrimitives(ids);
+	if (!selected)
+		throw new Error('选中完整电容组失败。');
+	const selectedIds = await selectControl.getAllSelectedPrimitives_PrimitiveId();
+	const unexpectedIds = findUnexpectedSelectionIds(selectedIds, ids);
+	if (unexpectedIds.length)
+		throw new Error(`整组选择意外包含 ${unexpectedIds.length} 个页面既有图元，已中止移动。`);
+}
+
+export function findUnexpectedSelectionIds(selectedIds, allowedIds) {
+	const allowed = new Set(allowedIds ?? []);
+	return (selectedIds ?? []).filter(id => !allowed.has(id));
+}
+
+function createCanvasPlacementWaiter(timeoutMs = 120000) {
+	const target = globalThis.parent ?? globalThis;
+	let armed = false;
+	let settled = false;
+	let timeoutId;
+	let resolvePromise;
+	let rejectPromise;
+	let onMouseUp;
+	let onKeyDown;
+	const cleanup = () => {
+		target.removeEventListener('mouseup', onMouseUp, true);
+		target.removeEventListener('keydown', onKeyDown, true);
+		if (timeoutId)
+			clearTimeout(timeoutId);
+	};
+	const finish = (callback, value) => {
+		if (settled)
+			return;
+		settled = true;
+		cleanup();
+		callback(value);
+	};
+	onMouseUp = (event) => {
+		if (armed && event.button === 0)
+			finish(resolvePromise, { x: event.clientX, y: event.clientY });
+	};
+	onKeyDown = (event) => {
+		if (event.key === 'Escape')
+			finish(rejectPromise, new Error('已取消当前整组放置。'));
+	};
+	const promise = new Promise((resolve, reject) => {
+		resolvePromise = resolve;
+		rejectPromise = reject;
+		target.addEventListener('mouseup', onMouseUp, true);
+		target.addEventListener('keydown', onKeyDown, true);
+		timeoutId = setTimeout(() => {
+			finish(reject, new Error('等待整组落位超时。'));
+		}, timeoutMs);
+	});
+	return {
+		arm() {
+			armed = true;
+		},
+		cancel() {
+			if (settled)
+				return;
+			settled = true;
+			cleanup();
+		},
+		promise,
+	};
+}
+
+async function waitForStagedGroupMove(staged, timeoutMs = 5000) {
+	const expiresAt = Date.now() + timeoutMs;
+	while (Date.now() < expiresAt) {
+		const components = await globalThis.eda.sch_PrimitiveComponent.get(staged.created.componentIds);
+		const anchor = components[0];
+		if (anchor) {
+			const movedX = Math.abs(anchor.getState_X() - staged.origin.x) > 0.001;
+			const movedY = Math.abs(anchor.getState_Y() - staged.origin.y) > 0.001;
+			if (movedX || movedY)
+				return;
+		}
+		await sleep(20);
+	}
+	throw new Error('整组移动结束后仍停留在临时位置。');
+}
+
+async function validateStagedDomainPlacement(staged, domain) {
+	const components = await globalThis.eda.sch_PrimitiveComponent.get(staged.created.componentIds);
+	const componentMap = new Map(components.map(component => [primitiveIdOf(component), component]));
+	const anchorId = staged.capacitorIds[0];
+	const anchor = componentMap.get(anchorId);
+	const anchorBefore = staged.geometry.components[anchorId];
+	if (!anchor || !anchorBefore)
+		throw new Error('落位校验未找到锚点电容。');
+	const deltaX = anchor.getState_X() - anchorBefore.x;
+	const deltaY = anchor.getState_Y() - anchorBefore.y;
+
+	for (const [primitiveId, before] of Object.entries(staged.geometry.components)) {
+		const component = componentMap.get(primitiveId);
+		if (!component)
+			throw new Error(`落位校验缺少图元 ${primitiveId}。`);
+		const after = componentGeometry(component);
+		if (!isUniformlyTranslated([before.x, before.y], [after.x, after.y], deltaX, deltaY))
+			throw new Error(`图元 ${primitiveId} 未随整组同步移动。`);
+	}
+
+	for (const [index, primitiveId] of staged.capacitorIds.entries()) {
+		const designator = componentMap.get(primitiveId)?.getState_Designator?.();
+		if (designator !== staged.designators[index])
+			throw new Error(`电容位号校验失败：预期 ${staged.designators[index]}，实际 ${designator || '空'}。`);
+	}
+
+	const powerFlag = componentMap.get(staged.flags.powerFlagId);
+	const groundFlag = componentMap.get(staged.flags.groundFlagId);
+	if (powerFlag?.getState_Net?.() !== domain.label)
+		throw new Error(`电源标签校验失败：预期 ${domain.label}。`);
+	if (groundFlag?.getState_Net?.() !== 'GND')
+		throw new Error('GND 标签校验失败。');
+
+	const wires = staged.created.wireIds.length
+		? await globalThis.eda.sch_PrimitiveWire.get(staged.created.wireIds)
+		: [];
+	const wireMap = new Map(wires.map(wire => [primitiveIdOf(wire), wire]));
+	for (const [primitiveId, before] of Object.entries(staged.geometry.wires)) {
+		const wire = wireMap.get(primitiveId);
+		if (!wire)
+			throw new Error(`落位校验缺少导线 ${primitiveId}。`);
+		if (!isUniformlyTranslated(before, lineCoordinates(wire.getState_Line()), deltaX, deltaY))
+			throw new Error(`导线 ${primitiveId} 未随整组同步移动。`);
+	}
+	if (wires.length) {
+		const nets = new Set(wires.map(wire => wire.getState_Net?.()).filter(Boolean));
+		if (!nets.has(domain.label) || !nets.has('GND'))
+			throw new Error(`母线网络校验失败：需要同时连接 ${domain.label} 与 GND。`);
+	}
+}
+
 function exposeLegacyWindowEvent(event) {
 	const bindings = [{ target: globalThis, value: event }];
 	if (globalThis.parent && globalThis.parent !== globalThis) {
@@ -1080,6 +1334,97 @@ function exposeLegacyWindowEvent(event) {
 				delete target.event;
 		}
 	};
+}
+
+async function placeDomainsAsMovedGroups(mouseEvent) {
+	setError('');
+	setSuccess('');
+	const domains = state.domains.filter(domain => domain.pinNumbers.length > 0);
+	if (!domains.length) {
+		setError('请至少选择一个电源网络。');
+		return;
+	}
+	const errors = domains.flatMap((domain) => {
+		return domainPlacementErrors(domain).map(message => `${domain.label || '未命名网络'}：${message}`);
+	});
+	if (errors.length) {
+		setError(errors.join(' '));
+		return;
+	}
+	if (state.placementPending) {
+		setError('当前正在逐组等待鼠标落位。');
+		return;
+	}
+
+	let runtime;
+	try {
+		runtime = getSchematicRuntime();
+	}
+	catch {
+		await placeDomainsSequentiallyWithMouse(mouseEvent);
+		return;
+	}
+
+	const EDA = globalThis.eda;
+	state.placementPending = true;
+	let completedDomains = 0;
+	let completedCaps = 0;
+	let windowHidden = false;
+
+	try {
+		for (const [index, domain] of domains.entries()) {
+			let staged;
+			let placementWaiter;
+			try {
+				staged = await createStagedDomainGroup(domain);
+				await selectStagedDomainGroup(staged);
+				placementWaiter = createCanvasPlacementWaiter();
+				await runtime.doCommand('MOVE_BY_CENTER_POINT');
+				placementWaiter.arm();
+				await EDA.sys_Message.showFollowMouseTip(`第 ${index + 1}/${domains.length} 组：点击整块放置 ${domain.label}`);
+				if (!windowHidden) {
+					await EDA.sys_IFrame.hideIFrame(IFRAME_ID);
+					windowHidden = true;
+				}
+				await placementWaiter.promise;
+				placementWaiter = null;
+				await sleep(250);
+				await waitForStagedGroupMove(staged);
+				await validateStagedDomainPlacement(staged, domain);
+				completedDomains += 1;
+				completedCaps += staged.capCount;
+				await refreshPrimitiveIdsSnapshot();
+			}
+			catch (error) {
+				placementWaiter?.cancel();
+				try {
+					await runtime.doCommand('draw_end');
+				}
+				catch {
+					// Continue with cleanup using the transaction baselines.
+				}
+				let rollbackFailures = [];
+				if (staged)
+					rollbackFailures = await rollback(staged.created);
+				const cleanupMessage = rollbackFailures.length
+					? ` 当前组回滚仍有 ${rollbackFailures.length} 项失败。`
+					: '';
+				throw new Error(`${error instanceof Error ? error.message : String(error)}${cleanupMessage}`);
+			}
+		}
+		setSuccess(`已整块放置并校验 ${completedDomains} 个电源网络、${completedCaps} 个电容。`);
+	}
+	catch (error) {
+		const progress = completedDomains > 0 ? `已完成 ${completedDomains}/${domains.length} 组。` : '';
+		setError(`${progress}${error instanceof Error ? error.message : String(error)}`);
+	}
+	finally {
+		state.placementPending = false;
+		await clearFollowMouseTip();
+		if (windowHidden)
+			await restoreGeneratorWindow();
+		await refreshPrimitiveIdsSnapshot();
+	}
 }
 
 async function placeDomainsSequentiallyWithMouse(mouseEvent) {
@@ -1282,7 +1627,7 @@ async function init() {
 			});
 		});
 		document.querySelector('#placeAllButton').addEventListener('click', (event) => {
-			void placeDomainsSequentiallyWithMouse(event);
+			void placeDomainsAsMovedGroups(event);
 		});
 		renderSelectedDevices();
 		renderAll();
