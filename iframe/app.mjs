@@ -741,13 +741,13 @@ export function selectCapacitorTextAttributes(attributes, intendedValue) {
 		.map(attribute => [attribute.getState_PrimitiveId(), attribute])).values()];
 }
 
-export async function shiftCapacitorTextLeft(componentId, intendedValue, gridSize = 10) {
+export async function shiftCapacitorTextRight(componentId, intendedValue, gridSize = 10) {
 	const attributes = await globalThis.eda.sch_PrimitiveAttribute.getAll(componentId);
 	const selected = selectCapacitorTextAttributes(attributes, intendedValue);
 	await Promise.all(selected.map(async (attribute) => {
 		const x = attribute.getState_X();
 		const primitiveId = attribute.getState_PrimitiveId();
-		const targetX = x - gridSize;
+		const targetX = x + gridSize;
 		const modified = await globalThis.eda.sch_PrimitiveAttribute.modify(primitiveId, { x: targetX });
 		if (!modified)
 			throw new Error(`移动电容文字 ${attribute.getState_Key()} 失败。`);
@@ -822,7 +822,7 @@ async function prepareCapacitor(component, cap, designator) {
 	if (designator && rotated.getState_Designator?.() !== designator)
 		throw new Error(`电容位号未能设置为 ${designator}。`);
 	await setCapacitorValue(rotated, cap.value);
-	await shiftCapacitorTextLeft(componentId, cap.value);
+	await shiftCapacitorTextRight(componentId, cap.value);
 	const pins = await globalThis.eda.sch_PrimitiveComponent.getAllPinsByPrimitiveId(componentId);
 	if (!pins || pins.length !== 2)
 		throw new Error('所选电容器件必须恰好具有两个引脚。');

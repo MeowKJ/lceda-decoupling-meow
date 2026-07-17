@@ -23,7 +23,7 @@ import {
 	restorePersistentPreferences,
 	selectCapacitorTextAttributes,
 	selectClosestPlacedComponent,
-	shiftCapacitorTextLeft,
+	shiftCapacitorTextRight,
 	suggestPowerLabel,
 	validateDomains,
 } from '../iframe/app.mjs';
@@ -275,8 +275,8 @@ test('verifies capacitor text movement through the attribute API', async () => {
 		},
 	};
 	try {
-		assert.equal(await shiftCapacitorTextLeft('C1', '100nF'), 2);
-		assert.deepEqual(moves, [['designator', 90], ['name', 110]]);
+		assert.equal(await shiftCapacitorTextRight('C1', '100nF'), 2);
+		assert.deepEqual(moves, [['designator', 110], ['name', 130]]);
 	}
 	finally {
 		globalThis.eda = previousEda;
@@ -293,7 +293,7 @@ test('fails generation when the attribute move is not applied', async () => {
 		},
 	};
 	try {
-		await assert.rejects(() => shiftCapacitorTextLeft('C1', '100nF'), /移动电容文字 Designator 失败/);
+		await assert.rejects(() => shiftCapacitorTextRight('C1', '100nF'), /移动电容文字 Designator 失败/);
 	}
 	finally {
 		globalThis.eda = previousEda;

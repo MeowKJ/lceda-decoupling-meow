@@ -59,7 +59,8 @@ test('supports native whole-group move with anchor fallback', async () => {
 	assert.match(bundle, /buildSharedBusPlan/);
 	assert.match(bundle, /sch_PrimitiveAttribute\.getAll/);
 	assert.match(bundle, /gridSize\s*=\s*10/);
-	assert.match(bundle, /targetX\s*=\s*x\s*-\s*gridSize/);
+	assert.match(bundle, /targetX\s*=\s*x\s*\+\s*gridSize/);
+	assert.doesNotMatch(bundle, /targetX\s*=\s*x\s*-\s*gridSize/);
 	assert.match(html, /class="action-dock"/);
 	assert.match(html, /data-global-cap-value="bulk"/);
 	assert.match(html, /data-global-cap-value="pin"/);
