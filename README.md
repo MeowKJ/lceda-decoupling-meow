@@ -3,7 +3,7 @@
 ![原理图自动去耦喵图标](./images/logo.png)
 
 [![CI](https://github.com/MeowKJ/lceda-decoupling-meow/actions/workflows/ci.yml/badge.svg)](https://github.com/MeowKJ/lceda-decoupling-meow/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/MeowKJ/lceda-decoupling-meow/blob/main/LICENSE)
 
 原理图自动去耦喵（简称“去耦喵”）是一个面向嘉立创 EDA 专业版 V3 的原理图生成扩展：选中一个芯片后，它会识别多个候选电源域，让用户确认引脚和电源标签，再批量添加主电容与逐引脚去耦电容。
 
@@ -15,7 +15,7 @@
 
 ## 操作演示（=^･ω･^=）
 
-![原理图自动去耦喵操作演示](https://cdn.jsdelivr.net/gh/MeowKJ/lceda-decoupling-meow@v0.9.15/images/usage-demo.gif)
+![原理图自动去耦喵操作演示](https://cdn.jsdelivr.net/gh/MeowKJ/lceda-decoupling-meow/images/usage-demo.gif)
 
 ## 使用说明 ฅ^•ﻌ•^ฅ
 
@@ -79,7 +79,7 @@ npm run check
 生成的扩展包位于：
 
 ```text
-build/dist/lceda-decoupling-meow_v0.9.15.eext
+build/dist/lceda-decoupling-meow_v0.9.16.eext
 ```
 
 在嘉立创 EDA 专业版 V3 中进入“高级 → 扩展管理器 → 导入”，选择 `.eext` 文件。导入后切换到“已安装”，选择“原理图自动去耦喵 → 配置”，勾选“显示在顶部菜单”；否则入口只会收纳在“高级 → 原理图自动去耦喵”子菜单中。
@@ -131,4 +131,4 @@ build/dist/lceda-decoupling-meow_v0.9.15.eext
 
 ## 许可证
 
-[Apache License 2.0](./LICENSE)
+[Apache License 2.0](https://github.com/MeowKJ/lceda-decoupling-meow/blob/main/LICENSE)

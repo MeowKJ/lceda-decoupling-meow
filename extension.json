@@ -3,7 +3,7 @@
 	"uuid": "7f342549d32b4cbca363f63d3b5b734d",
 	"displayName": "原理图自动去耦喵",
 	"description": "识别选中芯片的多个电源网络，将主电容、去耦电容、标签与母线作为完整图元组随鼠标整块放置。",
-	"version": "0.9.15",
+	"version": "0.9.16",
 	"publisher": "MeowKJ",
 	"engines": {
 		"eda": "^3.0.0"
