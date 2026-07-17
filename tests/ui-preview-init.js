@@ -66,6 +66,13 @@ globalThis.eda = {
 		getExtensionUserConfig(key) {
 			if (key === 'decouplingMeow.generatorInput.v1')
 				return previewInput;
+			if (key === 'decouplingMeow.preferences.v1') {
+				return {
+					bulk: { device: previewDevices.bulk, value: '4.7uF' },
+					pin: { device: previewDevices.pin, value: '100nF' },
+					schemaVersion: 1,
+				};
+			}
 			if (key === 'decouplingMeow.capacitorDevices.v2')
 				return previewDevices;
 			return null;

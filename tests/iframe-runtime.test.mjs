@@ -34,6 +34,9 @@ test('supports native whole-group move with anchor fallback', async () => {
 	assert.match(bundle, /hideIFrame/);
 	assert.match(bundle, /capacitorDevices\.v2/);
 	assert.match(bundle, /capacitorValues\.v1/);
+	assert.match(bundle, /preferences\.v1/);
+	assert.match(source, /restorePersistentPreferences/);
+	assert.match(source, /if \(!preferences\)\s+await savePreferences\(\)/);
 	assert.match(bundle, /selectClosestPlacedComponent/);
 	assert.match(bundle, /removeExtraPlacementAnchors/);
 	assert.match(bundle, /extractDeviceCapacitance/);

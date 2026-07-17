@@ -6,6 +6,7 @@ import {
 	allocateCapacitorDesignators,
 	buildBankPlan,
 	buildInitialDomains,
+	buildPersistentPreferences,
 	buildSharedBusPlan,
 	extractDeviceCapacitance,
 	findUnexpectedSelectionIds,
@@ -18,12 +19,67 @@ import {
 	matchesLibraryDevice,
 	normalizeCapacitanceValue,
 	orderVerticalPinsByRole,
+	restorePersistentPreferences,
 	selectCapacitorTextAttributes,
 	selectClosestPlacedComponent,
 	shiftCapacitorTextLeft,
 	suggestPowerLabel,
 	validateDomains,
 } from '../iframe/app.mjs';
+
+test('persists independent main and bypass device habits in one versioned snapshot', () => {
+	const preferences = buildPersistentPreferences({
+		bulk: { uuid: 'bulk-device', libraryUuid: 'bulk-library', name: 'Bulk', footprintName: 'C0603' },
+		pin: { uuid: 'pin-device', libraryUuid: 'pin-library', name: 'Bypass', footprintName: 'C0402' },
+	}, { bulk: '10uF', pin: '220nF' });
+	assert.deepEqual(preferences, {
+		bulk: {
+			device: {
+				description: '',
+				footprintName: 'C0603',
+				libraryUuid: 'bulk-library',
+				name: 'Bulk',
+				symbolName: '',
+				uuid: 'bulk-device',
+			},
+			value: '10uF',
+		},
+		pin: {
+			device: {
+				description: '',
+				footprintName: 'C0402',
+				libraryUuid: 'pin-library',
+				name: 'Bypass',
+				symbolName: '',
+				uuid: 'pin-device',
+			},
+			value: '220nF',
+		},
+		schemaVersion: 1,
+	});
+});
+
+test('prefers the versioned preference and migrates legacy device/value storage', () => {
+	const current = restorePersistentPreferences({
+		schemaVersion: 1,
+		bulk: { device: { uuid: 'new-bulk', libraryUuid: 'new-library' }, value: '22uF' },
+		pin: { device: { uuid: 'new-pin', libraryUuid: 'new-library' }, value: '47nF' },
+	}, {
+		bulk: { uuid: 'old-bulk', libraryUuid: 'old-library' },
+		pin: { uuid: 'old-pin', libraryUuid: 'old-library' },
+	}, { bulk: '4.7uF', pin: '100nF' });
+	assert.equal(current.devices.bulk.uuid, 'new-bulk');
+	assert.equal(current.devices.pin.uuid, 'new-pin');
+	assert.deepEqual(current.values, { bulk: '22uF', pin: '47nF' });
+
+	const migrated = restorePersistentPreferences(null, {
+		bulk: { uuid: 'old-bulk', libraryUuid: 'old-library' },
+		pin: { uuid: 'old-pin', libraryUuid: 'old-library' },
+	}, { bulk: '10uF', pin: '220nF' });
+	assert.equal(migrated.devices.bulk.uuid, 'old-bulk');
+	assert.equal(migrated.devices.pin.uuid, 'old-pin');
+	assert.deepEqual(migrated.values, { bulk: '10uF', pin: '220nF' });
+});
 
 test('allocates stable capacitor designators after the highest existing C number', () => {
 	assert.deepEqual(

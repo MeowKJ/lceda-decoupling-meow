@@ -2,6 +2,7 @@ const INPUT_STORAGE_KEY = 'decouplingMeow.generatorInput.v1';
 const DEVICES_STORAGE_KEY = 'decouplingMeow.capacitorDevices.v2';
 const CAP_VALUES_STORAGE_KEY = 'decouplingMeow.capacitorValues.v1';
 const LEGACY_DEVICE_STORAGE_KEY = 'decouplingMeow.capacitorDevice.v1';
+const PREFERENCES_STORAGE_KEY = 'decouplingMeow.preferences.v1';
 const IFRAME_ID = 'lceda-decoupling-meow-window';
 const DEFAULT_CAP_VALUES = Object.freeze({ bulk: '4.7uF', pin: '100nF' });
 
@@ -464,9 +465,44 @@ function minimalDevice(item) {
 		description: item.description ?? '',
 		footprintName: item.footprint?.name ?? item.footprintName ?? '',
 		libraryUuid: item.libraryUuid,
-		name: item.name,
+		name: item.name ?? '',
 		symbolName: item.symbol?.name ?? item.symbolName ?? '',
 		uuid: item.uuid,
+	};
+}
+
+function normalizeStoredDevice(device) {
+	if (!device?.uuid || !device?.libraryUuid)
+		return null;
+	return minimalDevice(device);
+}
+
+export function buildPersistentPreferences(devices, values) {
+	return {
+		bulk: {
+			device: normalizeStoredDevice(devices?.bulk),
+			value: normalizeCapacitanceValue(values?.bulk) || DEFAULT_CAP_VALUES.bulk,
+		},
+		pin: {
+			device: normalizeStoredDevice(devices?.pin),
+			value: normalizeCapacitanceValue(values?.pin) || DEFAULT_CAP_VALUES.pin,
+		},
+		schemaVersion: 1,
+	};
+}
+
+export function restorePersistentPreferences(preferences, storedDevices = {}, storedValues = {}, legacyDevice = null) {
+	const bulkPreference = preferences?.schemaVersion === 1 ? preferences.bulk : null;
+	const pinPreference = preferences?.schemaVersion === 1 ? preferences.pin : null;
+	return {
+		devices: {
+			bulk: normalizeStoredDevice(bulkPreference?.device ?? storedDevices.bulk ?? legacyDevice),
+			pin: normalizeStoredDevice(pinPreference?.device ?? storedDevices.pin ?? legacyDevice),
+		},
+		values: {
+			bulk: normalizeCapacitanceValue(bulkPreference?.value ?? storedValues.bulk) || DEFAULT_CAP_VALUES.bulk,
+			pin: normalizeCapacitanceValue(pinPreference?.value ?? storedValues.pin) || DEFAULT_CAP_VALUES.pin,
+		},
 	};
 }
 
@@ -510,11 +546,26 @@ function renderSelectedDevices() {
 }
 
 async function saveDevices() {
-	await globalThis.eda.sys_Storage.setExtensionUserConfig(DEVICES_STORAGE_KEY, state.devices);
+	await Promise.all([
+		globalThis.eda.sys_Storage.setExtensionUserConfig(DEVICES_STORAGE_KEY, state.devices),
+		savePreferences(),
+	]);
 }
 
 async function saveCapValues() {
-	await globalThis.eda.sys_Storage.setExtensionUserConfig(CAP_VALUES_STORAGE_KEY, state.values);
+	await Promise.all([
+		globalThis.eda.sys_Storage.setExtensionUserConfig(CAP_VALUES_STORAGE_KEY, state.values),
+		savePreferences(),
+	]);
+}
+
+async function savePreferences() {
+	const saved = await globalThis.eda.sys_Storage.setExtensionUserConfig(
+		PREFERENCES_STORAGE_KEY,
+		buildPersistentPreferences(state.devices, state.values),
+	);
+	if (saved === false)
+		throw new Error('保存电容器件偏好失败，请检查扩展存储权限。');
 }
 
 export async function applyGlobalCapValue(kind, rawValue) {
@@ -1572,17 +1623,15 @@ async function init() {
 		if (!state.input)
 			throw new Error('没有找到生成输入，请关闭窗口后重新运行去耦喵。');
 
+		const preferences = EDA.sys_Storage.getExtensionUserConfig(PREFERENCES_STORAGE_KEY) ?? null;
 		const legacyDevice = EDA.sys_Storage.getExtensionUserConfig(LEGACY_DEVICE_STORAGE_KEY) ?? null;
 		const storedDevices = EDA.sys_Storage.getExtensionUserConfig(DEVICES_STORAGE_KEY) ?? {};
-		state.devices = {
-			bulk: storedDevices.bulk ?? legacyDevice,
-			pin: storedDevices.pin ?? legacyDevice,
-		};
 		const storedValues = EDA.sys_Storage.getExtensionUserConfig(CAP_VALUES_STORAGE_KEY) ?? {};
-		state.values = {
-			bulk: normalizeCapacitanceValue(storedValues.bulk) || DEFAULT_CAP_VALUES.bulk,
-			pin: normalizeCapacitanceValue(storedValues.pin) || DEFAULT_CAP_VALUES.pin,
-		};
+		const restoredPreferences = restorePersistentPreferences(preferences, storedDevices, storedValues, legacyDevice);
+		state.devices = restoredPreferences.devices;
+		state.values = restoredPreferences.values;
+		if (!preferences)
+			await savePreferences();
 		state.domains = buildInitialDomains(state.input.selected.pins, state.values);
 		await refreshPrimitiveIdsSnapshot();
 
