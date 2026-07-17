@@ -67,6 +67,9 @@ test('supports native whole-group move with anchor fallback', async () => {
 	assert.match(html, /class="pins-drawer"/);
 	assert.doesNotMatch(html, /historyPanel|生成记录/);
 	assert.match(source, /class="domain-summary"/);
+	assert.match(html, /<span>网络名称<\/span><span>引脚号<\/span>/);
+	assert.match(source, /pins\.map\(pin => `Pin \$\{pin\.number\}`\)/);
+	assert.match(source, /<span>Pin \$\{escapeHtml\(pin\.number\)\}<\/span>/);
 	assert.match(source, /class="summary-bulk-toggle"/);
 	assert.match(html, /class="notice-stack"/);
 	assert.match(css, /grid-template-rows:\s*36px auto minmax\(0, 1fr\) 54px/);

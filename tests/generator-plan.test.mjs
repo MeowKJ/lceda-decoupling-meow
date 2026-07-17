@@ -12,6 +12,7 @@ import {
 	extractDeviceCapacitance,
 	findUnexpectedSelectionIds,
 	getExtraPlacementAnchorIds,
+	getPowerDomainSuggestion,
 	isDrawableWireLine,
 	isGroundPinName,
 	isPowerCandidate,
@@ -132,6 +133,33 @@ test('prefers an explicit existing net and never guesses a generic VDD voltage',
 	assert.equal(suggestPowerLabel(pin(3, 'VDD_3V3')), 'VDD_3V3');
 	assert.equal(suggestPowerLabel(pin(4, 'VDD33')), 'VDD33');
 	assert.equal(suggestPowerLabel(pin(5, 'AVDD-1V8')), 'AVDD-1V8');
+});
+
+test('groups different power pin names by explicit network and keeps pin details', () => {
+	const domains = buildInitialDomains([
+		pin(1, 'VDD_CORE', { net: 'MCU_VDD' }),
+		pin(2, 'VDD_IO', { net: 'MCU_VDD' }),
+		pin(3, 'VDD_CORE', { net: 'MCU_AVDD' }),
+		pin(4, 'VDD_CORE', { net: 'MCU_DVDD' }),
+	]);
+	assert.equal(domains.length, 3);
+	assert.deepEqual(domains.find(domain => domain.label === 'MCU_VDD').pinNumbers, ['1', '2']);
+	assert.deepEqual(domains.find(domain => domain.label === 'MCU_AVDD').pinNumbers, ['3']);
+	assert.deepEqual(domains.find(domain => domain.label === 'MCU_DVDD').pinNumbers, ['4']);
+	assert.deepEqual(getPowerDomainSuggestion(pin(5, 'VDD_IO', { net: 'MCU_VDD' })), {
+		groupKey: 'net:MCU_VDD',
+		label: 'MCU_VDD',
+		source: 'network',
+	});
+});
+
+test('does not merge a fallback pin label with an explicit network of the same text', () => {
+	const domains = buildInitialDomains([
+		pin(1, 'VDD'),
+		pin(2, 'VDD_IO', { net: 'VDD' }),
+	]);
+	assert.equal(domains.length, 2);
+	assert.deepEqual(domains.map(domain => domain.pinNumbers), [['1'], ['2']]);
 });
 
 test('creates separate initial domains for different power labels', () => {

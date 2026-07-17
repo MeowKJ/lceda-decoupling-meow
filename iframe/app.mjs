@@ -60,11 +60,25 @@ export function isPowerCandidate(pin) {
 		&& (pin?.isPowerType === true || POWER_PIN_PATTERNS.some(pattern => pattern.test(name)));
 }
 
-export function suggestPowerLabel(pin) {
+export function getPowerDomainSuggestion(pin) {
 	const existingNet = String(pin?.net ?? '').trim();
-	if (existingNet && !existingNet.startsWith('$'))
-		return existingNet;
-	return String(pin?.name ?? '').trim() || 'VDD';
+	if (existingNet && !existingNet.startsWith('$')) {
+		return {
+			groupKey: `net:${existingNet}`,
+			label: existingNet,
+			source: 'network',
+		};
+	}
+	const pinName = String(pin?.name ?? '').trim() || 'VDD';
+	return {
+		groupKey: `pin:${pinName}`,
+		label: pinName,
+		source: 'pin',
+	};
+}
+
+export function suggestPowerLabel(pin) {
+	return getPowerDomainSuggestion(pin).label;
 }
 
 function createCap(value, kind, pinNumber = '') {
@@ -136,20 +150,20 @@ function createDomain(label, values = state.values) {
 }
 
 export function buildInitialDomains(pins, values = DEFAULT_CAP_VALUES) {
-	const byLabel = new Map();
+	const byGroupKey = new Map();
 	for (const pin of pins ?? []) {
 		if (!isPowerCandidate(pin))
 			continue;
-		const label = suggestPowerLabel(pin);
-		let domain = byLabel.get(label);
+		const suggestion = getPowerDomainSuggestion(pin);
+		let domain = byGroupKey.get(suggestion.groupKey);
 		if (!domain) {
-			domain = createDomain(label, values);
-			byLabel.set(label, domain);
+			domain = createDomain(suggestion.label, values);
+			byGroupKey.set(suggestion.groupKey, domain);
 		}
 		domain.pinNumbers.push(String(pin.number));
 		domain.pinCaps[String(pin.number)] = [createCap(values.pin, 'pin', String(pin.number))];
 	}
-	return [...byLabel.values()];
+	return [...byGroupKey.values()];
 }
 
 function getPin(number) {
@@ -279,10 +293,10 @@ function renderDomain(domain) {
 	const bulkSummary = domain.bulkEnabled === false
 		? '不放主容'
 		: summarizeCaps(domain.bulkCaps, '未设置');
-	const pinPreview = pins.map(pin => pin.number).join(' / ') || '未分配引脚';
+	const pinPreview = pins.map(pin => `Pin ${pin.number}`).join(' / ') || '未分配引脚';
 	return `<details class="domain-card" data-domain-id="${domain.id}">
 		<summary class="domain-summary">
-			<strong class="domain-name">${escapeHtml(domain.label || '未命名电源域')}</strong>
+			<strong class="domain-name" title="网络名称：${escapeHtml(domain.label || '未命名电源域')}">${escapeHtml(domain.label || '未命名电源域')}</strong>
 			<span class="domain-pins" title="${escapeHtml(pinPreview)}">${escapeHtml(pinPreview)}</span>
 			<label class="summary-bulk-toggle"><input type="checkbox" data-toggle-bulk="${domain.id}" ${domain.bulkEnabled !== false ? 'checked' : ''} /><span>${escapeHtml(bulkSummary)}</span></label>
 			<span class="summary-value">${escapeHtml(summarizeCaps(pinCaps))}</span>
