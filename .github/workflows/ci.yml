@@ -44,7 +44,9 @@ jobs:
           name="$(node -p "require('./extension.json').name")"
           asset="build/dist/${name}_v${version}.eext"
           test -f "$asset"
-          sha256sum "$asset" > "${asset}.sha256"
+          asset_dir="$(dirname "$asset")"
+          asset_name="$(basename "$asset")"
+          (cd "$asset_dir" && sha256sum "$asset_name" > "${asset_name}.sha256")
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
           echo "asset=$asset" >> "$GITHUB_OUTPUT"
