@@ -9,6 +9,7 @@ test('supports native whole-group move with anchor fallback', async () => {
 	const html = await readFile(new URL('../iframe/index.html', import.meta.url), 'utf8');
 	const css = await readFile(new URL('../iframe/styles.css', import.meta.url), 'utf8');
 	const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
+	const changelog = await readFile(new URL('../CHANGELOG.md', import.meta.url), 'utf8');
 	const edaignore = await readFile(new URL('../.edaignore', import.meta.url), 'utf8');
 	const workflow = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
 	const placement = bundle.indexOf('placeComponentWithMouse');
@@ -88,6 +89,7 @@ test('supports native whole-group move with anchor fallback', async () => {
 	assert.match(source, /await sleep\(20\)/);
 	assert.match(readme, /!\[原理图自动去耦喵操作演示\]\(https:\/\/cdn\.jsdelivr\.net\/gh\/MeowKJ\/lceda-decoupling-meow\/images\/usage-demo\.gif\)/);
 	assert.doesNotMatch(readme, /data:image|;base64,/i);
+	assert.doesNotMatch(changelog, /图标|README|GIF|GitHub Release|SHA-256|\bCI\b|许可证|测试/);
 	assert.match(edaignore, /^\/images\/usage-demo\.gif$/m);
 	assert.match(edaignore, /^\/LICENSE$/m);
 	assert.match(edaignore, /^\/NOTICE$/m);
