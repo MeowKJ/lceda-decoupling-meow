@@ -1,11 +1,21 @@
 # 去耦喵（lceda-decoupling-meow）
 
+<p align="center">
+  <img src="./images/logo.png" width="112" alt="去耦喵图标" />
+</p>
+
 [![CI](https://github.com/MeowKJ/lceda-decoupling-meow/actions/workflows/ci.yml/badge.svg)](https://github.com/MeowKJ/lceda-decoupling-meow/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 
 去耦喵是一个面向嘉立创 EDA 专业版 V3 的原理图生成扩展：选中一个芯片后，它会识别多个候选电源域，让用户确认引脚和电源标签，再批量添加主电容与逐引脚去耦电容。
 
 自动识别只是建议。用户可以选择任意引脚、新建或删除电源域、拆分或合并引脚归属，并为每个电源域单独增删电容。
+
+<p align="center">
+  <img src="./images/generated-groups.png" width="520" alt="去耦喵在嘉立创 EDA 中生成两组独立去耦网络" />
+</p>
+
+<p align="center"><sub>真实编辑器结果：每个电源域独立整块落位，共享连续电源/GND 母线。</sub></p>
 
 ## 功能
 
