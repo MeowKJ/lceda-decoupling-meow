@@ -91,6 +91,7 @@ test('supports native whole-group move with anchor fallback', async () => {
 	assert.match(readme, /!\[原理图自动去耦喵电源域展开编辑界面\]\(\.\/images\/ui-domain-detail\.png\)/);
 	assert.match(readme, /!\[原理图自动去耦喵操作演示\]\(\.\/images\/usage-demo\.gif\)/);
 	assert.doesNotMatch(readme, /data:image|;base64,/i);
+	assert.doesNotMatch(readme, /## 当前限制|局限|Beta|副本工程|docs\/architecture\.md/);
 	assert.doesNotMatch(changelog, /图标|README|GIF|GitHub Release|SHA-256|\bCI\b|许可证|测试/);
 	assert.doesNotMatch(edaignore, /^\/images\/(?:ui-overview\.png|ui-domain-detail\.png|usage-demo\.gif)$/m);
 	assert.match(edaignore, /^\/LICENSE$/m);

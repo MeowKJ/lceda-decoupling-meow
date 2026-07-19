@@ -91,7 +91,7 @@ npm run check
 生成的扩展包位于：
 
 ```text
-build/dist/lceda-decoupling-meow_v0.9.21.eext
+build/dist/lceda-decoupling-meow_v0.9.22.eext
 ```
 
 在嘉立创 EDA 专业版 V3 中进入“高级 → 扩展管理器 → 导入”，选择 `.eext` 文件。导入后切换到“已安装”，选择“原理图自动去耦喵 → 配置”，勾选“显示在顶部菜单”；否则入口只会收纳在“高级 → 原理图自动去耦喵”子菜单中。
@@ -116,22 +116,6 @@ build/dist/lceda-decoupling-meow_v0.9.21.eext
 - 不移动芯片，不检查或删除用户已有器件；
 - 重复运行会在新锚点追加一组，不维护或修改旧批次。
 
-## 当前限制
-
-- 只处理一个选中芯片；
-- 文字右移只对本次新建电容生效，已有电容不会被自动改写；
-- 芯片右键入口使用了对 V3.2.149 原理图菜单事件的保护性兼容层；若后续客户端内部菜单结构变化，可继续使用顶部菜单入口；
-- 原生库参数同步只读取明确的 `Value`、`Capacitance`、`容量` 等字段或带单位的名称/描述，不会把 `0603` 等封装号猜成容量；器件没有可靠参数时保留用户当前输入；
-- 电容值只作为器件 `Value` 写入，不判断容值、耐压和介质是否合理；
-- 完整组预览使用 V3.2.149 客户端内部 `MOVE_BY_CENTER_POINT` 多图元移动命令；不使用剪贴板，也不会复制图元或覆盖用户复制内容；
-- 若未来客户端移除该命令，会自动回退为单锚点逐组放置；
-- 生成位置不代表 PCB 去耦电容的最终物理位置；
-- 只生成阵列内部的连续上下母线，不跨越原理图自动拉长导线；
-- 生成期间不要让协作者或其他扩展同时新增导线；失败回滚需要用放置前导线基线识别客户端合并后的本批线段；
-- 创建接口在官方文档中仍标记为 Beta，建议先在副本工程验证。
-
-详细模型和事务机制见 [docs/architecture.md](./docs/architecture.md)。
-
 ## 官方开发依据
 
 - [嘉立创 EDA 扩展 API 开发指南](https://prodocs.lceda.cn/cn/api/guide/)
@@ -139,7 +123,7 @@ build/dist/lceda-decoupling-meow_v0.9.21.eext
 - [官方 EasyEDA API Skill 资料](https://github.com/easyeda/easyeda-api-skill)
 - [官方 `.enet` 网表格式](https://github.com/easyeda/easyeda-pro-netlist-format)
 
-本仓库基于官方 `pro-api-sdk` 开发，并在 [NOTICE](./NOTICE) 中保留上游归属。
+本仓库基于官方 `pro-api-sdk` 开发，并在 [NOTICE](https://github.com/MeowKJ/lceda-decoupling-meow/blob/main/NOTICE) 中保留上游归属。
 
 ## 许可证
 
