@@ -87,10 +87,12 @@ test('supports native whole-group move with anchor fallback', async () => {
 	assert.match(source, /整块放置 \$\{summary\.domains\} 个电源域/);
 	assert.match(source, /第 \$\{index \+ 1\}\/\$\{domains\.length\} 组/);
 	assert.match(source, /await sleep\(20\)/);
-	assert.match(readme, /!\[原理图自动去耦喵操作演示\]\(https:\/\/cdn\.jsdelivr\.net\/gh\/MeowKJ\/lceda-decoupling-meow\/images\/usage-demo\.gif\)/);
+	assert.match(readme, /!\[原理图自动去耦喵电源域总览界面\]\(\.\/images\/ui-overview\.png\)/);
+	assert.match(readme, /!\[原理图自动去耦喵电源域展开编辑界面\]\(\.\/images\/ui-domain-detail\.png\)/);
+	assert.match(readme, /!\[原理图自动去耦喵操作演示\]\(\.\/images\/usage-demo\.gif\)/);
 	assert.doesNotMatch(readme, /data:image|;base64,/i);
 	assert.doesNotMatch(changelog, /图标|README|GIF|GitHub Release|SHA-256|\bCI\b|许可证|测试/);
-	assert.match(edaignore, /^\/images\/usage-demo\.gif$/m);
+	assert.doesNotMatch(edaignore, /^\/images\/(?:ui-overview\.png|ui-domain-detail\.png|usage-demo\.gif)$/m);
 	assert.match(edaignore, /^\/LICENSE$/m);
 	assert.match(edaignore, /^\/NOTICE$/m);
 	assert.match(workflow, /gh release create[^\n]*images\/usage-demo\.gif/);

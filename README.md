@@ -9,13 +9,25 @@
 
 自动识别只是建议。用户可以选择任意引脚、新建或删除电源域、拆分或合并引脚归属，并为每个电源域单独增删电容。
 
+## 界面预览
+
+![原理图自动去耦喵电源域总览界面](./images/ui-overview.png)
+
+电源域总览集中显示网络名称、具体引脚号、主电容开关和逐引脚去耦数量，底部可统一选择器件与修改容量。
+
+![原理图自动去耦喵电源域展开编辑界面](./images/ui-domain-detail.png)
+
+展开电源域后，可修改电源标签、增删主电容，并为每个电源引脚分别调整去耦电容。
+
+## 生成结果
+
 ![原理图自动去耦喵在嘉立创 EDA 中生成两组独立去耦网络](./images/generated-groups.png)
 
 真实编辑器结果：每个电源域独立整块落位，共享连续电源/GND 母线。
 
 ## 操作演示（=^･ω･^=）
 
-![原理图自动去耦喵操作演示](https://cdn.jsdelivr.net/gh/MeowKJ/lceda-decoupling-meow/images/usage-demo.gif)
+![原理图自动去耦喵操作演示](./images/usage-demo.gif)
 
 ## 使用说明 ฅ^•ﻌ•^ฅ
 
@@ -79,7 +91,7 @@ npm run check
 生成的扩展包位于：
 
 ```text
-build/dist/lceda-decoupling-meow_v0.9.20.eext
+build/dist/lceda-decoupling-meow_v0.9.21.eext
 ```
 
 在嘉立创 EDA 专业版 V3 中进入“高级 → 扩展管理器 → 导入”，选择 `.eext` 文件。导入后切换到“已安装”，选择“原理图自动去耦喵 → 配置”，勾选“显示在顶部菜单”；否则入口只会收纳在“高级 → 原理图自动去耦喵”子菜单中。
